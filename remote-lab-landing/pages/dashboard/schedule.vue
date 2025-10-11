@@ -1,6 +1,7 @@
 <script setup>
 	import axios from 'axios';
 	import swal from 'sweetalert2';
+	import { API_BASE_URL } from "~/config/api.js";
 
 	// head and meta
 	useHead({ title: 'Lịch đăng ký thực hành' });
@@ -41,7 +42,7 @@
 		try {
 			const token = useCookie('access_token').value;
 			const header = { headers: { Authorization: `Bearer ${token}` } };
-			const url = 'https://remote-lab.tr1nh.net/api/schedule';
+			const url = `${API_BASE_URL}/api/schedule`;
 			const response = await axios.get(url, header);
 			items.value = response.data.data;
 		} catch (error) {
@@ -51,7 +52,7 @@
 		try {
 			const token = useCookie('access_token').value;
 			const header = { headers: { Authorization: `Bearer ${token}` } };
-			const url = 'https://remote-lab.tr1nh.net/api/computer';
+			const url = `${API_BASE_URL}/api/computer`;
 			const response = await axios.get(url, header);
 			computers.value = response.data.data;
 		} catch (error) {
@@ -86,7 +87,7 @@
 				const token = useCookie('access_token').value;
 				const header = { headers: { Authorization: `Bearer ${token}` } };
 				const id = itemSelected.value.id;
-				const url = `https://remote-lab.tr1nh.net/api/schedule/${id}/approve`;
+				const url = `${API_BASE_URL}/api/schedule/${id}/approve`;
 				const body = { computerId: computerId.value };
 				const response = await axios.post(url, body, header);
 				fetchItems();
@@ -108,7 +109,7 @@
 	});
 
 	onMounted(() => {
-		let source = new EventSource('https://remote-lab.tr1nh.net/sse');
+		let source = new EventSource(`${API_BASE_URL}/sse`);
 		source.addEventListener('message', message => {
 			let data = JSON.parse(message.data);
 			if (data.type == 'new-schedule') fetchItems();

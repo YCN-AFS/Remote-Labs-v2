@@ -24,6 +24,7 @@
 <script setup>
 	import axios from 'axios';
 	import swal from 'sweetalert2';
+	import { API_BASE_URL } from "~/config/api.js";
 
 	useHead({ title: 'Đăng nhập' });
 	definePageMeta({ title: 'Đăng nhập' });
@@ -37,7 +38,7 @@
 		isLoading.value = true;
 
 		try {
-			const url = 'https://remote-lab.tr1nh.net/api/auth/login';
+			const url = `${API_BASE_URL}/api/auth/login`;
 			const response = await axios.post(url, { email: email.value, password: password.value });
 			const { user, token } = response.data.data;
 

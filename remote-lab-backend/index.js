@@ -1,9 +1,5 @@
 import dotenv from "dotenv";
 
-import { existsSync, mkdirSync } from "fs";
-import { JSONFile } from "lowdb/node";
-import { Low } from "lowdb";
-
 import PayOS from "@payos/node";
 
 import express from "express";
@@ -22,8 +18,23 @@ import { exec } from "child_process";
 import bcrypt from "bcrypt";
 import jwt from "jsonwebtoken";
 
+// Import database models
+import { User } from "./models/User.js";
+import { Student } from "./models/Student.js";
+import { Payment } from "./models/Payment.js";
+import { Computer } from "./models/Computer.js";
+import { Schedule } from "./models/Schedule.js";
+import { testConnection, closeConnection } from "./config/database.js";
+
 (async () => {
 	dotenv.config();
+
+	// Test database connection
+	const connected = await testConnection();
+	if (!connected) {
+		console.error('❌ Cannot connect to database. Please check your configuration.');
+		process.exit(1);
+	}
 
 	let db = await initDatabase();
 	let payOS = initPayOS();
@@ -34,19 +45,36 @@ import jwt from "jsonwebtoken";
 	initRoutes({ app, db, jobs, payOS });
 	initErrorHandler(app);
 	startServer(app);
+
+	// Graceful shutdown
+	process.on('SIGINT', async () => {
+		console.log('\n🛑 Shutting down gracefully...');
+		await closeConnection();
+		process.exit(0);
+	});
+
+	process.on('SIGTERM', async () => {
+		console.log('\n🛑 Shutting down gracefully...');
+		await closeConnection();
+		process.exit(0);
+	});
 })();
 
 async function initDatabase() {
-	let directory = new URL('./data', import.meta.url).pathname;
-	if (!existsSync(directory)) mkdirSync(directory);
+	// Initialize database models
+	const UserModel = new User();
+	const StudentModel = new Student();
+	const ScheduleModel = new Schedule();
+	const PaymentModel = new Payment();
+	const ComputerModel = new Computer();
 
-	let User = await initLowDb('user');
-	let Student = await initLowDb('student');
-	let Schedule = await initLowDb('schedule');
-	let Payment = await initLowDb('payment');
-	let Computer = await initLowDb('computer');
-
-	return { User, Student, Schedule, Payment, Computer };
+	return { 
+		User: UserModel, 
+		Student: StudentModel, 
+		Schedule: ScheduleModel, 
+		Payment: PaymentModel, 
+		Computer: ComputerModel 
+	};
 }
 
 function initPayOS() {
@@ -57,17 +85,7 @@ function initPayOS() {
 	);
 }
 
-async function initLowDb(dbName, defaultData = []) {
-	let filePath = `./data/${dbName}.json`;
-	filePath = new URL(filePath, import.meta.url);
-	filePath = filePath.pathname;
-
-	let adapter = new JSONFile(filePath);
-	let db = new Low(adapter, defaultData);
-
-	await db.read();
-	return db;
-}
+// Removed initLowDb function - now using PostgreSQL models
 
 function initServer() {
 	let app = express();
@@ -81,7 +99,17 @@ function initMiddlewares(app) {
 	app.use(express.urlencoded({ extended: true }));
 	app.use(logger("dev"));
 	app.use(cookieParser());
-	app.use(cors());
+	app.use(cors({
+		origin: [
+			'http://localhost:3000',
+			'http://localhost:8080', 
+			'http://103.218.122.188:3000',
+			'http://103.218.122.188:8080'
+		],
+		credentials: true,
+		methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+		allowedHeaders: ['Content-Type', 'Authorization']
+	}));
 }
 
 function initRoutes({ app, db, jobs, payOS }) {
@@ -104,13 +132,35 @@ function initRoutes({ app, db, jobs, payOS }) {
 
 	app.use(authJWT);
 
-	app.get("/api/payment", (req, res) => res.status(200).json({ status: "success", data: Payment.data }));
+	app.get("/api/payment", async (req, res) => {
+		try {
+			const payments = await Payment.findAll();
+			res.status(200).json({ status: "success", data: payments });
+		} catch (error) {
+			res.status(500).json({ status: "error", message: error.message });
+		}
+	});
 
-	app.get("/api/schedule", (req, res) => res.status(200).json({ status: "success", data: Schedule.data }));
+	app.get("/api/schedule", async (req, res) => {
+		try {
+			const schedules = await Schedule.findAll();
+			res.status(200).json({ status: "success", data: schedules });
+		} catch (error) {
+			res.status(500).json({ status: "error", message: error.message });
+		}
+	});
+	
 	app.post("/api/schedule/:id/approve", (req, res) => approveSchedule({ req, res, sseClients, jobs, Schedule, Computer }));
 	app.get("/api/schedule/:id/cancel", (req, res) => cancelSchedule({ req, res, jobs, Schedule }));
 
-	app.get("/api/computer", (req, res) => res.status(200).json({ status: "success", data: Computer.data }));
+	app.get("/api/computer", async (req, res) => {
+		try {
+			const computers = await Computer.findAll();
+			res.status(200).json({ status: "success", data: computers });
+		} catch (error) {
+			res.status(500).json({ status: "error", message: error.message });
+		}
+	});
 	app.post("/api/computer", (req, res) => createComputer({ req, res, Computer }));
 	app.put("/api/computer/:id", (req, res) => updateComputer({ req, res, Computer }));
 	app.delete("/api/computer/:id", (req, res) => deleteComputer({ req, res, Computer }));
@@ -157,7 +207,7 @@ async function login({ req, res, User }) {
 	if (!email || !password) throw Error("Thiếu email hoặc mật khẩu");
 
 	// Find the user by email
-	const user = await User.data.find(u => u.email == email);
+	const user = await User.findByEmail(email);
 	if (!user) throw Error("Email hoặc mật khẩu không đúng");
 
 	// Compare passwords
@@ -179,26 +229,26 @@ async function login({ req, res, User }) {
 
 async function createPayment({ req, res, Payment,  payOS }) {
 	let { firstName, lastName, email, phone, courseId } = req.body;
-	let amount = 100000; // 100,000 VND
+	let amount = 5000; // 100,000 VND
 
 	// if payment info existed, response error
-	let payment = Payment.data.find(p => p.email == email || p.phone == phone);
+	let payment = await Payment.findOne({ email: email }) || await Payment.findOne({ phone: phone });
 	if (payment) throw Error("Email hoặc số điện thoại đã tồn tại");
 
 	// create payment data
 	let newPayment = {
 		id: nanoid(),
-		firstName: firstName,
-		lastName: lastName,
+		full_name: `${lastName} ${firstName}`,
 		email: email,
 		phone: phone,
 		amount: amount,
-		courseId: courseId,
-		orderCode: Number(String(Date.now()).slice(-6)),
+		course_id: courseId,
+		order_code: Number(String(Date.now()).slice(-6)),
 		password: randomPassword(),
+		status: 'pending'
 	};
-	Payment.data.push(newPayment);
-	await Payment.write();
+	
+	await Payment.create(newPayment);
 
 	// create qr code for purchase
 	let payOSData = await createQRPayment({ newPayment, payOS });
@@ -214,20 +264,20 @@ function randomPassword() {
 }
 
 async function createQRPayment({ newPayment, payOS }) {
-	let { id, firstName, lastName, email, phone, courseId, amount, orderCode } = newPayment;
+	let { id, full_name, email, phone, course_id, amount, order_code } = newPayment;
 	let domain = process.env.DOMAIN;
 	let body = {
-		orderCode: orderCode,
+		orderCode: order_code,
 		amount: Number(amount),
 		items: [{
 			name: `Khoá học ${id}`,
 			quantity: 1,
 			price: amount
 		}],
-		buyerName: `${lastName} ${firstName}`,
+		buyerName: full_name,
 		buyerPhone: phone,
 		buyerEmail: email,
-		description: `${firstName} mua khóa học ${courseId}`,
+		description: `Khoa hoc ${course_id}`,
 		returnUrl: `${domain}/api/payment/complete/`,
 		cancelUrl: `${domain}/api/payment/cancel/`,
 	};
@@ -240,7 +290,8 @@ async function createStudent({ req, res, Payment, payOS }) {
 	let { payment } = await checkPayment({ orderCode, Payment, payOS });
 
 	// create profile account
-	let { firstName, lastName, email, phone, password } = payment;
+	let { full_name, email, phone, password } = payment;
+	const [lastName, firstName] = full_name.split(' ').reverse();
 	await createAccountProfile({ firstName, lastName, email, phone, password });
 
 	// send email to admin
@@ -255,7 +306,7 @@ async function createStudent({ req, res, Payment, payOS }) {
 
 async function checkPayment({ orderCode, Payment, payOS }) {
 	// if orderCode not existed, throw error
-	let payment = Payment.data.find(p => p.orderCode == orderCode);
+	let payment = await Payment.findByOrderCode(orderCode);
 	if (!payment) throw Error("Không tìm thấy thông tin thanh toán");
 
 	// if payment not success, throw error
@@ -263,8 +314,7 @@ async function checkPayment({ orderCode, Payment, payOS }) {
 	if (purchase.status != "PAID") throw Error("Chưa thanh toán thành công, vui lòng kiểm tra lại");
 
 	// update payment status
-	payment.status = purchase.status;
-	await Payment.write();
+	await Payment.updateStatus(orderCode, purchase.status, purchase);
 
 	return { payment, detail: purchase };
 }
@@ -393,26 +443,21 @@ async function registerSchedule({ req, res, sseClients, Schedule, Computer }) {
 	now.setMinutes(now.getMinutes() + 1);
 	if (startTime < now) throw Error("Thời gian thực hành ít nhất phải sau 1 phút từ hiện tại");
 
-	// check schedule is full
-	let schedules = Schedule.data.filter(s => 
-		(startTime >= s.startTime && startTime <= s.endTime) ||
-		(endTime >= s.startTime && endTime <= s.endTime) ||
-		(startTime <= s.startTime && endTime >= s.endTime) ||
-		(startTime >= s.startTime && endTime <= s.endTime)
-	);
-	if (schedules.length >= Computer.data.length) throw Error("Lịch đăng ký đã đầy");
+	// check if time slot is available
+	const isAvailable = await Schedule.isTimeSlotAvailable(startTime, endTime);
+	if (!isAvailable) throw Error("Lịch đăng ký đã đầy");
 
 	// save schedule with status
 	let newSchedule = {
 		id: nanoid(),
 		email: email,
-		userName: email.replace(/[^a-zA-Z0-9]/g, "").slice(0, 5),
-		startTime: startTime,
-		endTime: endTime,
+		user_name: email.replace(/[^a-zA-Z0-9]/g, "").slice(0, 5),
+		start_time: startTime,
+		end_time: endTime,
 		status: "pending"
 	};
-	Schedule.data.push(newSchedule);
-	await Schedule.write();
+	
+	await Schedule.create(newSchedule);
 
 	// send notify to admin
 	await sendMailNewSchedule(newSchedule);
@@ -619,8 +664,7 @@ async function pwsh(cmd, { port = 5985 }) {
 
 async function findApprovedSchedule({ req, res, Schedule }) {
 	let email = req.params.email;
-	let schedules = Schedule.data.filter(s => s.email == email && s.status == "approved");
-	schedules = JSON.parse(JSON.stringify(schedules));
+	let schedules = await Schedule.findApprovedByEmail(email);
 	return res.status(200).json({
 		status: "success",
 		data: schedules
@@ -631,17 +675,16 @@ async function cancelSchedule({ req, res, jobs, Schedule }) {
 	let id = req.params.id;
 
 	// if schedule not existed, response error
-	let schedule = Schedule.data.find(s => s.id == id);
+	let schedule = await Schedule.findById(id);
 	if (!schedule) throw Error("Không tìm thấy lịch đăng ký");
 
 	// remove job
-	let job = jobs[schedule.startTime];
+	let job = jobs[schedule.start_time];
 	if (job) job.cancel();
-	delete jobs[schedule.startTime];
+	delete jobs[schedule.start_time];
 
 	// update schedule status
-	schedule.status = "canceled";
-	await Schedule.write();
+	await Schedule.cancel(id);
 
 	// send email to student and admin
 	await sendMailCanceledJob(schedule);
@@ -674,13 +717,12 @@ async function createComputer({ req, res, Computer }) {
 		id: nanoid(),
 		name: name,
 		description: description,
-		natPortRdp: natPortRdp,
-		natPortWinRm: natPortWinRm,
-		createdAt: new Date(),
+		nat_port_rdp: natPortRdp,
+		nat_port_winrm: natPortWinRm,
 		status: "available"
 	};
-	Computer.data.push(newComputer);
-	await Computer.write();
+	
+	await Computer.create(newComputer);
 
 	return res.status(200).json({
 		status: "success",
@@ -693,29 +735,29 @@ async function updateComputer({ req, res, Computer }) {
 	let id = req.params.id;
 	let { name, description, natPortRdp, natPortWinRm } = req.body;
 
-	let computer = Computer.data.find(c => c.id == id);
+	let computer = await Computer.findById(id);
 	if (!computer) throw Error("Không tìm thấy máy tính");
 
-	computer.name = name;
-	computer.description = description;
-	computer.natPortRdp = natPortRdp;
-	computer.natPortWinRm = natPortWinRm;
-	await Computer.write();
+	await Computer.updateById(id, {
+		name: name,
+		description: description,
+		nat_port_rdp: natPortRdp,
+		nat_port_winrm: natPortWinRm
+	});
 
 	return res.status(200).json({
 		status: "success",
-		message: "Đã cập nhật thông tin máy tính",
-		data: computer
+		message: "Đã cập nhật thông tin máy tính"
 	});
 }
 
 async function deleteComputer({ req, res, Computer }) {
 	let id = req.params.id;
-	let index = Computer.data.findIndex(c => c.id == id);
-
-	if (index == -1) throw Error("Không tìm thấy máy tính");
-	Computer.data.splice(index, 1);
-	await Computer.write();
+	
+	let computer = await Computer.findById(id);
+	if (!computer) throw Error("Không tìm thấy máy tính");
+	
+	await Computer.deleteById(id);
 
 	return res.status(200).json({
 		status: "success",

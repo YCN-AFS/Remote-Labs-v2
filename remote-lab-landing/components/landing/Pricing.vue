@@ -62,7 +62,7 @@
 						<span>Camera 1 góc nhìn</span>
 					</li>
 				</ul>
-				<button class="pricing__card__button" @click="showPayment = true">Mua ngay</button>
+				<button class="pricing__card__button" @click="togglePayment">Mua ngay</button>
 			</div>
 
 			<div class="pricing__card lg:shadow-[rgba(145,_158,_171,_0.16)_-40px_40px_80px]">
@@ -132,4 +132,8 @@
 
 <script setup>
 	const showPayment = ref(false);
+	
+	function togglePayment() {
+		showPayment.value = !showPayment.value;
+	}
 </script>

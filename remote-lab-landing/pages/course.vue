@@ -195,6 +195,7 @@
 <script setup>
 	import swal from 'sweetalert2';
 	import axios from 'axios';
+	import { API_BASE_URL } from "~/config/api.js";
 
 	useHead({ title: 'Khoá học' });
 
@@ -272,7 +273,7 @@
 	});
 
 	onMounted(() => {
-		let source = new EventSource('https://remote-lab.tr1nh.net/sse');
+		let source = new EventSource(`${API_BASE_URL}/sse`);
 		source.addEventListener('message', message => {
 			let data = JSON.parse(message.data);
 			if (data.type != 'approved-schedule') return;
@@ -292,7 +293,7 @@
 
 	async function enrollCourse() {
 		try {
-			let response = await axios.post('https://remote-lab.tr1nh.net/api/course/enrol', { email: user.value.email });
+			let response = await axios.post(`${API_BASE_URL}/api/course/enrol`, { email: user.value.email });
 			window.location.reload();
 		}
 		catch (error) {

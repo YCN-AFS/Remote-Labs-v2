@@ -127,6 +127,7 @@
 <script setup>
 	import axios from "axios";
 	import swal from "sweetalert2";
+	import { API_BASE_URL } from "~/config/api.js";
 
 	const props = defineProps(['visible']);
 	const emit = defineEmits(['update:visible']);
@@ -167,7 +168,7 @@
 		formLoading.value = true;
 
 		try {
-			let response = await axios.post('https://remote-lab.tr1nh.net/api/payment', paymentInfo.value);
+			let response = await axios.post(`${API_BASE_URL}/api/payment`, paymentInfo.value);
 
 			let { bin, accountNumber, amount, description } = response.data.data;
 			qrPaymentUrl.value = `https://img.vietqr.io/image/${bin}-${accountNumber}-qr_only.jpg?addInfo=${description}&amount=${amount}`;

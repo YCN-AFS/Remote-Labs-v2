@@ -1,6 +1,7 @@
 <script setup>
 	import axios from 'axios';
 	import swal from 'sweetalert2';
+	import { API_BASE_URL } from "~/config/api.js";
 
 	// head and meta
 	useHead({ title: 'Thanh toán khoá học' });
@@ -37,7 +38,7 @@
 		try {
 			const token = useCookie('access_token').value;
 			const header = { headers: { Authorization: `Bearer ${token}` } };
-			const url = 'https://remote-lab.tr1nh.net/api/payment';
+			const url = `${API_BASE_URL}/api/payment`;
 			const response = await axios.get(url, header);
 			items.value = response.data.data;
 		} catch (error) {

@@ -1,6 +1,7 @@
 <script setup>
 	import axios from 'axios';
 	import swal from 'sweetalert2';
+	import { API_BASE_URL } from "~/config/api.js";
 
 	// head and meta
 	useHead({ title: 'PC thực hành' });
@@ -40,7 +41,7 @@
 		try {
 			const token = useCookie('access_token').value;
 			const header = { headers: { Authorization: `Bearer ${token}` } };
-			const url = 'https://remote-lab.tr1nh.net/api/computer';
+			const url = `${API_BASE_URL}/api/computer`;
 			const response = await axios.get(url, header);
 			items.value = response.data.data;
 		} catch (error) {
@@ -61,7 +62,7 @@
 		const token = useCookie('access_token').value;
 		const header = { headers: { Authorization: `Bearer ${token}` } };
 		axios
-			.post('https://remote-lab.tr1nh.net/api/computer', newItem.value, header)
+			.post(`${API_BASE_URL}/api/computer`, newItem.value, header)
 			.then(res => {
 				fetchItems();
 				newItem.value = { name: '', description: '', natPortRdp: 3389, natPortWinRm: 5985 };
@@ -82,7 +83,7 @@
 	async function updateItem() {
 		const headers = { 'Authorization': `Bearer ${useCookie('access_token').value}` }
 		axios
-			.put('https://remote-lab.tr1nh.net/api/computer/' + newItem.value.id, newItem.value, { headers })
+			.put(`${API_BASE_URL}/api/computer/` + newItem.value.id, newItem.value, { headers })
 			.then(res => {
 				fetchItems();
 				newItem.value = { name: '', description: '', natPortRdp: 3389, natPortWinRm: 5985 };
@@ -103,7 +104,7 @@
 			if (result.isConfirmed) {
 			const headers = { 'Authorization': `Bearer ${useCookie('access_token').value}` }
 			axios
-				.delete('https://remote-lab.tr1nh.net/api/computer/' + id, { headers })
+				.delete(`${API_BASE_URL}/api/computer/` + id, { headers })
 				.then(res => fetchItems())
 				.catch(err => swal.fire('Lỗi', err.message, 'error'));
 			}
