@@ -1,0 +1,26 @@
+---
+services:
+  remote-lab:
+    image: node
+    container_name: remote-lab
+    restart: unless-stopped
+    volumes:
+      - .:/app
+    environment:
+      - TZ=Asia/Ho_Chi_Minh
+    working_dir: /app
+    command: sh -c '
+      ln -sf /usr/share/zoneinfo/Asia/Ho_Chi_Minh /etc/localtime;
+      apt update;
+      apt install xz-utils curl gss-ntlmssp autossh -y;
+      if [ ! -f powershell.deb ]; then
+        curl -L https://github.com/PowerShell/PowerShell/releases/download/v7.4.6/powershell_7.4.6-1.deb_amd64.deb -o powershell.deb;
+      fi;
+      if [ ! $(which powershell) ]; then
+        dpkg -i powershell.deb; apt-get install -f -y;
+        pwsh -c "Install-Module -Name PSWSMan -Force";
+        pwsh -c "Install-WSMan";
+      fi;
+      npm i; node index.js'
+    ports:
+      - 8080:80
