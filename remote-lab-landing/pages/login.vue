@@ -61,23 +61,42 @@
 </template>
 
 <script setup>
+	import Swal from 'sweetalert2';
+
 	definePageMeta({
 		title: 'Login',
 		layout: 'default'
 	});
 
 	const profile = useProfileStore();
+	const router = useRouter();
 	const isLoading = ref(false);
 	const email = ref('');
 	const password = ref('');
 
-	function login() {
+	async function login() {
 		if (isLoading.value) return;
 		isLoading.value = true;
 
-		profile.login(email.value, password.value)
-			.then(token => navigateTo('/course'))
-			.catch(error => alert(error.response.data.message || error))
-			.finally(() => (isLoading.value = false));
+		try {
+			const token = await profile.login(email.value, password.value);
+			console.log('✅ Login successful, navigating to /course');
+			console.log('🔍 Token received:', token);
+			console.log('🔍 Navigating to /course...');
+			
+			// Try different navigation methods
+			try {
+				await navigateTo('/course', { external: true });
+			} catch (navError) {
+				console.log('🔍 navigateTo failed, trying router.push...');
+				await router.push('/course');
+			}
+		} catch (error) {
+			console.error('❌ Login error:', error);
+			const errorMessage = error.response?.data?.message || error.message || 'Đăng nhập thất bại';
+			Swal.fire('Lỗi', errorMessage, 'error');
+		} finally {
+			isLoading.value = false;
+		}
 	}
 </script>

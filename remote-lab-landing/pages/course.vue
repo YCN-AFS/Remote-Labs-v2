@@ -194,12 +194,12 @@
 
 <script setup>
 	import swal from 'sweetalert2';
-	import axios from 'axios';
 	import { API_BASE_URL } from "~/config/api.js";
 
 	useHead({ title: 'Khoá học' });
 
 	const profile = useProfileStore();
+	const apiClient = profile.getApiClient();
 	const isLoading = ref(true);
 	const course = ref(null);
 	const courseContent = ref(null);
@@ -220,7 +220,7 @@
 		let endTime = new Date(`${schedule.value.date}T${schedule.value.endTime}`);
 
 		try {
-			let response = await axios.post('https://remote-lab.tr1nh.net/api/schedule', {
+			let response = await apiClient.post('/api/schedule', {
 				userId: user.value.id,
 				email: user.value.email,
 				userName: user.value.username,
@@ -239,32 +239,45 @@
 
 	onBeforeMount(async () => {
 		// check token and redirect to login if not exist
-		let token = useCookie("token").value;
+		let token = useCookie("access_token").value;
 		if (!token) return useRouter().replace("/login");
 
 		try {
-			user.value = await profile.getProfile();
+			// Get user from cookie instead of profile.getProfile()
+			user.value = useCookie("user").value;
+			if (!user.value) {
+				swal.fire({ icon: 'error', title: 'Lỗi', text: 'Không tìm thấy thông tin người dùng' });
+				return useRouter().replace("/login");
+			}
 
-			// get first course of user
-			let courses = await moodle.callApi("core_enrol_get_users_courses", { userid: user.value.id });
-			if (courses.length > 0) course.value = courses[0];
-			else return await enrollCourse();
+			// Mock course data for now (since we removed Moodle)
+			course.value = {
+				id: 1,
+				fullname: "Khóa học Remote Lab",
+				shortname: "RL001",
+				category: "Remote Lab",
+				summary: "Khóa học thực hành Remote Lab"
+			};
 
-			// get course category
-			let categories = await moodle.callApi("core_course_get_categories", {
-				"criteria[0][key]": "id",
-				"criteria[0][value]": course.value.category
-			});
-			if (categories.length > 0) course.value.category = categories[0];
-
-			// get course content
-			let content = await moodle.callApi("core_course_get_contents", { courseid: course.value.id });
-			courseContent.value = content;
+			// Mock course content
+			courseContent.value = [
+				{
+					id: 1,
+					name: "Bài 1: Giới thiệu Remote Lab",
+					summary: "Tìm hiểu về hệ thống Remote Lab"
+				},
+				{
+					id: 2,
+					name: "Bài 2: Cài đặt môi trường",
+					summary: "Hướng dẫn cài đặt môi trường làm việc"
+				}
+			];
 
 			// get schedule
 			await getSchedule();
 		}
 		catch (error) {
+			console.error('Error loading course:', error);
 			swal.fire({ icon: 'error', title: 'Lỗi', text: error.toString() });
 		}
 		finally {
@@ -293,7 +306,7 @@
 
 	async function enrollCourse() {
 		try {
-			let response = await axios.post(`${API_BASE_URL}/api/course/enrol`, { email: user.value.email });
+			let response = await apiClient.post('/api/course/enrol', { email: user.value.email });
 			window.location.reload();
 		}
 		catch (error) {
@@ -304,8 +317,7 @@
 	async function getSchedule() {
 		try {
 			let email = user.value.email;
-			let url = 'https://remote-lab.tr1nh.net/api/schedule/' + email;
-			let response = await axios.get(url);
+			let response = await apiClient.get(`/api/schedule/${email}`);
 			let data = response.data.data;
 			if (data.length > 0) approvedSchedule.value = data[data.length - 1];
 		}
