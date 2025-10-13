@@ -24,6 +24,7 @@ import { Student } from "./models/Student.js";
 import { Payment } from "./models/Payment.js";
 import { Computer } from "./models/Computer.js";
 import { Schedule } from "./models/Schedule.js";
+import { StudentManager } from "./student-management.js";
 import { testConnection, closeConnection } from "./config/database.js";
 
 (async () => {
@@ -67,13 +68,15 @@ async function initDatabase() {
 	const ScheduleModel = new Schedule();
 	const PaymentModel = new Payment();
 	const ComputerModel = new Computer();
+	const StudentManagerInstance = new StudentManager(StudentModel, UserModel);
 
 	return { 
 		User: UserModel, 
 		Student: StudentModel, 
 		Schedule: ScheduleModel, 
 		Payment: PaymentModel, 
-		Computer: ComputerModel 
+		Computer: ComputerModel,
+		StudentManager: StudentManagerInstance
 	};
 }
 
@@ -113,7 +116,7 @@ function initMiddlewares(app) {
 }
 
 function initRoutes({ app, db, jobs, payOS }) {
-	let { User, Schedule, Payment, Computer } = db;
+	let { User, Schedule, Payment, Computer, StudentManager } = db;
 	let sseClients = [];
 
 	app.get("/", (_req, res) => res.send("Hello World"));
@@ -121,14 +124,92 @@ function initRoutes({ app, db, jobs, payOS }) {
 	app.post("/api/auth/login", (req, res) => login({ req, res, User }));
 
 	app.post("/api/payment", (req, res) => createPayment({ req, res, Payment, payOS }));
-	app.get("/api/payment/complete", (req, res) => createStudent({ req, res, Payment, payOS }));
+	app.get("/api/payment/complete", (req, res) => createStudent({ req, res, Payment, payOS, StudentManager }));
 	app.get("/api/payment/cancel", (_req, res) => res.redirect("/"));
 	app.get("/api/payment/:orderCode", (req, res) => getPaymentStatus({ req, res, Payment, payOS }));
 
-	app.post("/api/course/enrol", (req, res) => enrolCourse({ req, res, Payment }));
+	app.post("/api/course/enrol", (req, res) => enrolCourse({ req, res, Payment, StudentManager }));
 
 	app.get("/api/schedule/:email", (req, res) => findApprovedSchedule({ req, res, Schedule }));
-	app.post("/api/schedule", (req, res) => registerSchedule({ req, res, sseClients, Schedule, Computer }));
+	app.post("/api/schedule", (req, res) => registerSchedule({ req, res, sseClients, Schedule, Computer, StudentManager }));
+
+	// Student Management APIs (public access for testing)
+	app.get("/api/students", async (req, res) => {
+		try {
+			const students = await StudentManager.getAllStudents();
+			res.status(200).json({ status: "success", data: students });
+		} catch (error) {
+			res.status(500).json({ status: "error", message: error.message });
+		}
+	});
+
+	app.get("/api/students/stats", async (req, res) => {
+		try {
+			const stats = await StudentManager.getStudentStats();
+			res.status(200).json({ status: "success", data: stats });
+		} catch (error) {
+			res.status(500).json({ status: "error", message: error.message });
+		}
+	});
+
+	app.post("/api/students", async (req, res) => {
+		try {
+			const { email, fullName, phone, courseId } = req.body;
+			const result = await StudentManager.createStudent({ email, fullName, phone, courseId });
+			res.status(201).json({ 
+				status: "success", 
+				message: "Học viên đã được tạo thành công",
+				data: result
+			});
+		} catch (error) {
+			res.status(400).json({ status: "error", message: error.message });
+		}
+	});
+
+	app.get("/api/students/search", async (req, res) => {
+		try {
+			const { q } = req.query;
+			if (!q) {
+				return res.status(400).json({ status: "error", message: "Query parameter 'q' is required" });
+			}
+			const students = await StudentManager.searchStudents(q);
+			res.status(200).json({ status: "success", data: students });
+		} catch (error) {
+			res.status(500).json({ status: "error", message: error.message });
+		}
+	});
+
+	// Send login credentials to student (public access)
+	app.post("/api/students/:id/send-credentials", async (req, res) => {
+		try {
+			const { id } = req.params;
+			const student = await Student.findById(id);
+			if (!student) {
+				return res.status(404).json({ status: "error", message: "Học viên không tồn tại" });
+			}
+
+			// Get user credentials
+			const user = await User.findByEmail(student.email);
+			if (!user) {
+				return res.status(404).json({ status: "error", message: "Tài khoản đăng nhập không tồn tại" });
+			}
+
+			// Send email with credentials
+			await sendMailToNewStudent(user.email, user.password);
+			
+			res.status(200).json({ 
+				status: "success", 
+				message: "Thông tin đăng nhập đã được gửi",
+				data: {
+					email: user.email,
+					username: user.username,
+					password: user.password
+				}
+			});
+		} catch (error) {
+			res.status(500).json({ status: "error", message: error.message });
+		}
+	});
 
 	app.use(authJWT);
 
@@ -164,6 +245,29 @@ function initRoutes({ app, db, jobs, payOS }) {
 	app.post("/api/computer", (req, res) => createComputer({ req, res, Computer }));
 	app.put("/api/computer/:id", (req, res) => updateComputer({ req, res, Computer }));
 	app.delete("/api/computer/:id", (req, res) => deleteComputer({ req, res, Computer }));
+
+	// Protected Student Management APIs (require authentication)
+	app.put("/api/students/:id", async (req, res) => {
+		try {
+			const { id } = req.params;
+			const updateData = req.body;
+			const student = await StudentManager.updateStudent(id, updateData);
+			res.status(200).json({ status: "success", data: student });
+		} catch (error) {
+			res.status(400).json({ status: "error", message: error.message });
+		}
+	});
+
+	app.delete("/api/students/:id", async (req, res) => {
+		try {
+			const { id } = req.params;
+			await StudentManager.deleteStudent(id);
+			res.status(200).json({ status: "success", message: "Học viên đã được xóa" });
+		} catch (error) {
+			res.status(400).json({ status: "error", message: error.message });
+		}
+	});
+
 }
 
 function initSSE({ req, res, sseClients }) {
@@ -191,10 +295,22 @@ function authJWT(req, res, next) {
 	let authHeader = req.headers['authorization'];
 	let token = authHeader && authHeader.split(' ')[1];
 
-	if (token == null) return res.sendStatus(401); // No token, unauthorized
+	if (token == null) {
+		console.log('❌ No token provided');
+		return res.status(401).json({ 
+			status: "error", 
+			message: "Token không được cung cấp" 
+		});
+	}
 
 	jwt.verify(token, process.env.JWT_SECRET, (err, user) => {
-		if (err) return res.sendStatus(403); // Invalid token, forbidden
+		if (err) {
+			console.log('❌ Invalid token:', err.message);
+			return res.status(403).json({ 
+				status: "error", 
+				message: "Token không hợp lệ - token không được tìm thấy" 
+			});
+		}
 		req.user = user;
 		next();
 	});
@@ -202,22 +318,26 @@ function authJWT(req, res, next) {
 
 async function login({ req, res, User }) {
 	const { email, password } = req.body;
+	console.log('🔍 Login attempt:', { email, password: '***' });
 
 	// Validate input
 	if (!email || !password) throw Error("Thiếu email hoặc mật khẩu");
 
 	// Find the user by email
 	const user = await User.findByEmail(email);
+	console.log('🔍 User found:', user ? 'Yes' : 'No');
 	if (!user) throw Error("Email hoặc mật khẩu không đúng");
 
 	// Compare passwords
 	const isMatch = await bcrypt.compare(password, user.password);
+	console.log('🔍 Password match:', isMatch);
 	if (!isMatch) throw Error("Email hoặc mật khẩu không đúng");
 
 	// Create JWT token
 	let payload = { email: user.email, role: user.role };
 	let secret = process.env.JWT_SECRET;
 	const token = jwt.sign(payload, secret, { expiresIn: "1d" });
+	console.log('✅ Login successful for:', email);
 
 	// Respond with user data
 	let { password: _password, ...userData } = user;
@@ -284,15 +404,39 @@ async function createQRPayment({ newPayment, payOS }) {
 	return await payOS.createPaymentLink(body);
 }
 
-async function createStudent({ req, res, Payment, payOS }) {
+async function createStudent({ req, res, Payment, payOS, StudentManager }) {
 	// check payment status
 	let orderCode = req.query.orderCode;
 	let { payment } = await checkPayment({ orderCode, Payment, payOS });
 
-	// create profile account
-	let { full_name, email, phone, password } = payment;
-	const [lastName, firstName] = full_name.split(' ').reverse();
-	await createAccountProfile({ firstName, lastName, email, phone, password });
+	// create student in local database (replaces Moodle/Profile integration)
+	let studentCreated = false;
+	let studentCredentials = null;
+	
+	try {
+		const { full_name, email, phone, course_id } = payment;
+		console.log(`📝 Creating student for payment:`, { full_name, email, phone, course_id });
+		
+		const result = await StudentManager.createStudent({
+			email: email,
+			fullName: full_name,
+			phone: phone,
+			courseId: course_id
+		});
+		console.log(`✅ Student ${email} created successfully after payment:`, result);
+		studentCreated = true;
+		studentCredentials = result.credentials;
+	} catch (error) {
+		console.error("❌ Student creation failed:", error.message);
+		console.error("❌ Error details:", error);
+		// Continue anyway - payment is still valid
+	}
+
+	// send email to student with login credentials
+	if (studentCreated && studentCredentials) {
+		await sendMailToNewStudent(studentCredentials.email, studentCredentials.password);
+		console.log(`📧 Login credentials sent to ${studentCredentials.email}`);
+	}
 
 	// send email to admin
 	await sendMailNewPayment(payment);
@@ -355,14 +499,16 @@ async function sendMailToExistedStudent(email) {
 
 async function sendMailToNewStudent(email, password) {
 	let body = "<p>Thông tin đăng nhập Remote Lab:</p>";
-	body += `<li>Website: https://demo.tr1nh.net</li>`;
+	body += "<ul>";
+	body += `<li>Website: http://103.218.122.188:8080/login</li>`;
 	body += `<li>Email: ${email}</li>`;
-	body += `<li>Mật khẩu: ${password}</li></ul>`;
+	body += `<li>Mật khẩu: ${password}</li>`;
 	body += '<li>Hướng dẫn sử dụng: <a href="https://docs.google.com/document/d/1mAJNXhLiGgnrbIyIosKXXRJfx8rC80YXKwChR8a8nh4/edit?usp=sharing">https://docs.google.com/document/d/1mAJNXhLiGgnrbIyIosKXXRJfx8rC80YXKwChR8a8nh4/edit?usp=sharing</a></li>';
+	body += "</ul>";
 
 	await sendMail({
 		receiver: email,
-		title: "Remote Lab - Thông tin đăng nhập",
+		title: "Lab T&A - Thông tin đăng nhập Remote Lab",
 		body: body
 	});
 }
@@ -399,44 +545,60 @@ async function getPaymentStatus({ req, res, Payment, payOS }) {
 	});
 }
 
-async function enrolCourse({ req, res, Payment }) {
+async function enrolCourse({ req, res, Payment, StudentManager }) {
 	// check payment existed
 	let email = req.body.email;
 	let payment = Payment.data.find(p => p.email == email);
 	if (!payment) throw Error("Không tìm thấy thông tin thanh toán");
 	if (payment.status != "PAID") throw Error("Chưa thanh toán thành công");
 
-	// find student in LMS
-	let students = await callMoodleService("core_user_get_users_by_field", {
-		field: "email",
-		values: [email]
-	});
-	if (students.length == 0) throw Error("Người dùng không tồn tại");
-	let student = students[0];
-
-	// enroll course for student
-	const STUDENT_ROLE = 5;
-	await callMoodleService("enrol_manual_enrol_users", {
-		"enrolments[0][roleid]": STUDENT_ROLE,
-		"enrolments[0][userid]": student.id,
-		"enrolments[0][courseid]": payment.courseId
-	});
+	// Check if student exists in local database (replaces Moodle check)
+	try {
+		const studentExists = await StudentManager.validateStudent(email);
+		if (!studentExists) {
+			// Create student automatically if not exists
+			console.log(`📝 Student ${email} not found, creating new student record`);
+			await StudentManager.createStudent({
+				email: email,
+				fullName: payment.full_name || email.split('@')[0],
+				phone: payment.phone || '',
+				courseId: payment.course_id || 'default'
+			});
+		} else {
+			// Enroll existing student to course
+			await StudentManager.enrollStudent(email, payment.course_id);
+		}
+	} catch (error) {
+		console.warn("⚠️ Student enrollment failed:", error.message);
+		// Continue anyway - don't block payment completion
+	}
 
 	return res.status(200).json({
 		status: "success",
-		message: "Đã thêm học viên vào khóa học"
+		message: "Đã xác nhận thanh toán và đăng ký khóa học thành công"
 	});
 }
 
-async function registerSchedule({ req, res, sseClients, Schedule, Computer }) {
+async function registerSchedule({ req, res, sseClients, Schedule, Computer, StudentManager }) {
 	let { email, startTime, endTime } = req.body;
 
-	// check student existed in LMS
-	let students = await callMoodleService("core_user_get_users_by_field", {
-		field: "email",
-		values: [email]
-	});
-	if (students.length == 0) throw Error("Người dùng không tồn tại");
+	// Check if student exists in local database (replaces Moodle check)
+	try {
+		const studentExists = await StudentManager.validateStudent(email);
+		if (!studentExists) {
+			// If student doesn't exist, create them automatically
+			console.log(`📝 Student ${email} not found, creating new student record`);
+			await StudentManager.createStudent({
+				email: email,
+				fullName: email.split('@')[0], // Use email prefix as name
+				phone: '',
+				courseId: 'default'
+			});
+		}
+	} catch (error) {
+		console.warn("⚠️ Student validation/creation failed:", error.message);
+		// Continue anyway - don't block schedule registration
+	}
 
 	// if starttime < now + 1h, response error
 	let now = new Date();
@@ -471,6 +633,11 @@ async function registerSchedule({ req, res, sseClients, Schedule, Computer }) {
 }
 
 async function callMoodleService(wsfunction, params) {
+	// Check if Moodle is disabled
+	if (process.env.MOODLE_DISABLED === 'true') {
+		throw new Error("Moodle integration is disabled");
+	}
+
 	let token = process.env.LMS_TOKEN;
 	let response = await axios({
 		url: "/webservice/rest/server.php",

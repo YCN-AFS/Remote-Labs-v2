@@ -1,5 +1,20 @@
 import axios from "axios";
 import moodle from "~/utils/moodle";
+import { API_BASE_URL } from "~/config/api.js";
+
+// Create axios instance with interceptor
+const apiClient = axios.create({
+	baseURL: API_BASE_URL
+});
+
+// Add request interceptor to include token
+apiClient.interceptors.request.use((config) => {
+	const token = useCookie("access_token").value;
+	if (token) {
+		config.headers.Authorization = `Bearer ${token}`;
+	}
+	return config;
+});
 
 export const useProfileStore = defineStore('profile', {
 	state: () => ({
@@ -18,9 +33,9 @@ export const useProfileStore = defineStore('profile', {
 		},
 
 		async login(email, password) {
-			// login profile service
+			// login local API service
 			let response = await axios({
-				url: "https://api-auth.s4h.edu.vn/auth/login",
+				url: `${API_BASE_URL}/api/auth/login`,
 				method: "post",
 				headers: { "Content-Type": "application/json" },
 				data: {
@@ -29,13 +44,18 @@ export const useProfileStore = defineStore('profile', {
 				},
 			});
 
-			let accessToken = response.data.accessToken;
-			useCookie("token-profile").value = accessToken;
-
-			// login moodle service
-			let token = await moodle.loginWithToken(accessToken);
-			useCookie("token").value = token;
+			let { user, token } = response.data.data;
+			useCookie("access_token").value = token;
 			useCookie("email").value = email;
+			useCookie("user").value = user;
+			
+			// Return token for navigation
+			return token;
+		},
+
+		// Method to get API client with token
+		getApiClient() {
+			return apiClient;
 		}
 	},
 })

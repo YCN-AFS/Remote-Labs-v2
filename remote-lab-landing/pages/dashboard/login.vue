@@ -39,8 +39,15 @@
 
 		try {
 			const url = `${API_BASE_URL}/api/auth/login`;
+			console.log('🔍 Login attempt:', { email: email.value, password: password.value });
+			console.log('🔍 API URL:', url);
+			
 			const response = await axios.post(url, { email: email.value, password: password.value });
+			console.log('✅ Login response:', response.data);
+			
 			const { user, token } = response.data.data;
+			console.log('✅ User data:', user);
+			console.log('✅ Token:', token);
 
 			useCookie('access_token').value = token;
 			useCookie('user').value = JSON.stringify(user);
@@ -48,7 +55,9 @@
 			useRouter().push('/dashboard/schedule');
 		}
 		catch (error) {
-			swal.fire('Lỗi', error.response.data.message || error, 'error');
+			console.error('❌ Login error:', error);
+			console.error('❌ Error response:', error.response?.data);
+			swal.fire('Lỗi', error.response?.data?.message || error.message || 'Đăng nhập thất bại', 'error');
 		}
 		finally {
 			isLoading.value = false;
