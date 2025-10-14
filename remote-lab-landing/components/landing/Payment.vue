@@ -191,7 +191,7 @@
 
 	async function checkPaymentStatus() {
 		try {
-			let response = await axios.get(`https://remote-lab.tr1nh.net/api/payment/${orderCode.value}`);
+			let response = await axios.get(`https://remote-lab.rm.s4h.edu.vn/api/payment/${orderCode.value}`);
 			let { status } = response.data.data;
 
 			if (status != 'PAID') return swal.fire({
@@ -200,7 +200,7 @@
 				text: 'Chưa nhận được thanh toán từ bạn. Hãy kiểm tra lại trạng thái thanh toán sau ít phút nhé.'
 			});
 
-			if (status == 'PAID') await axios.post(`https://remote-lab.tr1nh.net/api/payment/complete/?orderCode=${orderCode.value}`);
+			if (status == 'PAID') await axios.post(`https://remote-lab.rm.s4h.edu.vn/api/payment/complete/?orderCode=${orderCode.value}`);
 
 			nextStep();
 		}

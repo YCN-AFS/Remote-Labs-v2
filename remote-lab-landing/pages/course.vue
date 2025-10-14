@@ -143,7 +143,7 @@
 								<li class="course__stats__item">Thời gian kết thúc: {{ new Date(approvedSchedule.endTime).toLocaleString('en-GB') }}</li>
 								<li class="course__stats__item">userName: {{ approvedSchedule.userName}}</li>
 								<li class="course__stats__item">Mật khẩu: {{ approvedSchedule.password }}</li>
-								<li class="course__stats__item">Địa chỉ Remote Desktop: tr1nh.net</li>
+								<li class="course__stats__item">Địa chỉ Remote Desktop: rm.s4h.edu.vn</li>
 							</ul>
 						</div>
 					</div>
@@ -224,8 +224,8 @@
 				userId: user.value.id,
 				email: user.value.email,
 				userName: user.value.username,
-				startTime: startTime.getTime(),
-				endTime: endTime.getTime()
+				startTime: startTime,
+				endTime: endTime
 			});
 			swal.fire({ icon: 'success', title: 'Thành công', text: response.data.message });
 		}

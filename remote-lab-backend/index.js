@@ -548,9 +548,9 @@ async function getPaymentStatus({ req, res, Payment, payOS }) {
 async function enrolCourse({ req, res, Payment, StudentManager }) {
 	// check payment existed
 	let email = req.body.email;
-	let payment = Payment.data.find(p => p.email == email);
-	if (!payment) throw Error("Không tìm thấy thông tin thanh toán");
-	if (payment.status != "PAID") throw Error("Chưa thanh toán thành công");
+	let payment = await Payment.findByEmail(email);
+	if (!payment || payment.length === 0) throw Error("Không tìm thấy thông tin thanh toán");
+	if (payment[0].status != "PAID") throw Error("Chưa thanh toán thành công");
 
 	// Check if student exists in local database (replaces Moodle check)
 	try {
@@ -581,6 +581,14 @@ async function enrolCourse({ req, res, Payment, StudentManager }) {
 
 async function registerSchedule({ req, res, sseClients, Schedule, Computer, StudentManager }) {
 	let { email, startTime, endTime } = req.body;
+
+	// Convert timestamps to Date objects if they are numbers (milliseconds)
+	if (typeof startTime === 'number') {
+		startTime = new Date(startTime);
+	}
+	if (typeof endTime === 'number') {
+		endTime = new Date(endTime);
+	}
 
 	// Check if student exists in local database (replaces Moodle check)
 	try {
@@ -682,14 +690,13 @@ async function approveSchedule({ req, res, sseClients, jobs, Schedule, Computer 
 	let { computerId } = req.body;
 
 	// if schedule not existed, response error
-	let schedule = Schedule.data.find(s => s.id == id);
+	let schedule = await Schedule.findById(id);
 	if (!schedule) throw Error("Không tìm thấy lịch đăng ký");
 
 	// check computer existed
-	let computer = Computer.data.find(c => c.id == computerId);
+	let computer = await Computer.findById(computerId);
 	if (!computer) throw Error("Máy tính không tồn tại");
 	if (computer.status != "available") throw Error("Máy tính không sẵn sàng");
-	schedule.computerId = computerId;
 
 	// random new RDP PORT for computer
 	let min = 3000;
@@ -701,24 +708,26 @@ async function approveSchedule({ req, res, sseClients, jobs, Schedule, Computer 
 	}
 
 	usedRdpPORT.push(newRdpPORT);
-	computer.natPortRdp = newRdpPORT;
-	await Computer.write();
+	
+	// Update computer with new RDP port
+	await Computer.updateById(computerId, { nat_port_rdp: newRdpPORT });
 	console.log("-> changed RDP PORT to: ", newRdpPORT);
 
 	// generate password for login into remote session
-	schedule.password = randomPassword();
-	schedule.natPortRdp = newRdpPORT;
-	await Schedule.write();
+	let password = randomPassword();
+	
+	// Update schedule with approval details
+	await Schedule.approve(id, computerId, password);
+
+	// Get updated schedule for job creation
+	let updatedSchedule = await Schedule.findById(id);
+	updatedSchedule.natPortRdp = newRdpPORT;
 
 	// create a crontab to create remote session before startTime 1 min
-	createSchedule(jobs, schedule, Computer);
+	await createSchedule(jobs, updatedSchedule, Computer);
 
 	// send email to student and admin
-	await sendMailScheduledJob(schedule);
-
-	// update schedule status
-	schedule.status = "approved";
-	await Schedule.write();
+	await sendMailScheduledJob(updatedSchedule);
 
 	broadcastSSE(sseClients, { type: "approved-schedule", email: schedule.email });
 
@@ -728,7 +737,7 @@ async function approveSchedule({ req, res, sseClients, jobs, Schedule, Computer 
 	});
 }
 
-function createSchedule(jobs, newSchedule, Computer) {
+async function createSchedule(jobs, newSchedule, Computer) {
 	let { startTime, endTime } = newSchedule;
 
 	// schedule to create remote session
@@ -739,15 +748,14 @@ function createSchedule(jobs, newSchedule, Computer) {
 			let { startTime, userName, password, computerId } = newSchedule;
 			console.log(`Create remote session for ${userName}`);
 
-			let computer = Computer.data.find(c => c.id == computerId);
-			let options = { port: computer.natPortWinRm };
+			let computer = await Computer.findById(computerId);
+			let options = { port: computer.nat_port_winrm };
 
 			await pwsh(`net user /add ${userName} ${password}`, options);
 			await pwsh(`net localgroup 'Remote Desktop Users' ${userName} /add`, options);
-			await pwsh(`ssh -o StrictHostKeyChecking=no -p 8030 remote@tr1nh.net -N -R ${computer.natPortRdp}:localhost:3389`, options);
+			await pwsh(`ssh -o StrictHostKeyChecking=no -p 8030 remote@rm.s4h.edu.vn -N -R ${computer.nat_port_rdp}:localhost:3389`, options);
 
-			computer.status = "busy";
-			await Computer.write();
+			await Computer.updateStatus(computerId, "busy");
 
 			delete jobs[startTime];
 			console.log('Created schedule OK');
@@ -760,13 +768,13 @@ function createSchedule(jobs, newSchedule, Computer) {
 	// schedule to remind student before 1 mins to end session
 	let remindTime = new Date(endTime);
 	remindTime.setMinutes(remindTime.getMinutes() - 1);
-	let computer = Computer.data.find(c => c.id == newSchedule.computerId);
+	let computer = await Computer.findById(newSchedule.computerId);
 	let temp = { ...newSchedule, remindTime, computer: computer };
 
 	jobs[remindTime] = schedule.scheduleJob(remindTime, async function (data) {
 		try {
 			let { userName, remindTime, computer } = data;
-			let options = { port: computer.natPortWinRm };
+			let options = { port: computer.nat_port_winrm };
 			await pwsh(`msg ${userName} 'Thời gian thực hành sắp kết thúc'`, options);
 			delete jobs[remindTime];
 		} catch (error) {
@@ -778,12 +786,11 @@ function createSchedule(jobs, newSchedule, Computer) {
 	jobs[endTime] = schedule.scheduleJob(endTime, async function (data) {
 		try {
 			let { endTime, userName, computer } = data;
-			let options = { port: computer.natPortWinRm };
+			let options = { port: computer.nat_port_winrm };
 			await pwsh(`net user /del ${userName}`, options);
 			await pwsh(`shutdown -t 0 -r -f`, options);
 
-			computer.status = "available";
-			await Computer.write();
+			await Computer.updateStatus(computer.id, "available");
 
 			console.log(`Deleted user ${userName} and restart PC`);
 			delete jobs[endTime];
@@ -795,7 +802,7 @@ function createSchedule(jobs, newSchedule, Computer) {
 
 async function sendMailScheduledJob(schedule) {
 	let body = "<p>Thông tin đăng nhập vào Remote Desktop:</p><ul>";
-	body += `<li>Địa chỉ Remote Desktop: tr1nh.net:${schedule.natPortRdp}</li>`;
+	body += `<li>Địa chỉ Remote Desktop: rm.s4h.edu.vn:${schedule.natPortRdp}</li>`;
 	body += `<li>Thời gian bắt đầu: ${new Date(schedule.startTime).toLocaleString('en-GB')}</li>`;
 	body += `<li>Thời gian kết thúc: ${new Date(schedule.endTime).toLocaleString('en-GB')}</li>`;
 	body += `<li>Username: ${schedule.userName}</li>`;

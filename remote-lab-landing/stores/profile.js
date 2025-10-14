@@ -1,5 +1,4 @@
 import axios from "axios";
-import moodle from "~/utils/moodle";
 import { API_BASE_URL } from "~/config/api.js";
 
 // Create axios instance with interceptor
@@ -22,14 +21,13 @@ export const useProfileStore = defineStore('profile', {
 	}),
 	actions: {
 		async getProfile() {
-			let email = useCookie("email").value;
-			let users = await moodle.callApi("core_user_get_users_by_field", {
-				field: "email",
-				values: [email],
-			});
-
-			this.user = users[0];
-			return users[0];
+			// Get user data from cookie instead of Moodle API
+			let user = useCookie("user").value;
+			if (user) {
+				this.user = user;
+				return user;
+			}
+			return null;
 		},
 
 		async login(email, password) {

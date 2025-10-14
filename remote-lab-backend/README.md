@@ -53,7 +53,7 @@ Tạo file `.env` ở thư mục gốc, tham khảo các biến sau (ví dụ):
 
 ```dotenv
 PORT=8000                                      # PORT của server
-DOMAIN=https://demo.tr1nh.net                  # tên miền của server, PayOS gọi đến khi thanh toán thành công
+DOMAIN=https://rm.s4h.edu.vn                  # tên miền của server, PayOS gọi đến khi thanh toán thành công
                                               
 PAYOS_CLIENT_ID=your_payos_client_id          
 PAYOS_API_KEY=your_payos_api_key              
@@ -697,7 +697,7 @@ Hệ thống Remote Lab được thiết kế để hỗ trợ học viên đăn
 
 1.  **Nhận thông tin truy cập:**
     *   Sau khi quản trị viên duyệt lịch của học viên, hệ thống sẽ gửi một email đến học viên.
-    *   Email này chứa các thông tin cần thiết để kết nối vào phiên làm việc từ xa: địa chỉ Remote Desktop (RDP) (ví dụ: `tr1nh.net:PORT`), tên người dùng (username) và mật khẩu tạm thời cho phiên thực hành, cùng với thời gian bắt đầu và kết thúc.
+    *   Email này chứa các thông tin cần thiết để kết nối vào phiên làm việc từ xa: địa chỉ Remote Desktop (RDP) (ví dụ: `rm.s4h.edu.vn:PORT`), tên người dùng (username) và mật khẩu tạm thời cho phiên thực hành, cùng với thời gian bắt đầu và kết thúc.
 
 2.  **Kết nối RDP:**
     *   Vào thời điểm bắt đầu lịch thực hành, học viên sử dụng các thông tin trong email để kết nối vào máy tính thực hành từ xa thông qua giao thức Remote Desktop (RDP).
