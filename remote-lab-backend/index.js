@@ -116,7 +116,7 @@ function initMiddlewares(app) {
 }
 
 function initRoutes({ app, db, jobs, payOS }) {
-	let { User, Schedule, Payment, Computer, StudentManager } = db;
+	let { User, Student, Schedule, Payment, Computer, StudentManager } = db;
 	let sseClients = [];
 
 	app.get("/", (_req, res) => res.send("Hello World"));
@@ -194,8 +194,8 @@ function initRoutes({ app, db, jobs, payOS }) {
 				return res.status(404).json({ status: "error", message: "Tài khoản đăng nhập không tồn tại" });
 			}
 
-			// Send email with credentials
-			await sendMailToNewStudent(user.email, user.password);
+		// Send email with credentials (use default password, not hashed)
+		await sendMailToNewStudent(user.email, '123456');
 			
 			res.status(200).json({ 
 				status: "success", 
@@ -203,13 +203,16 @@ function initRoutes({ app, db, jobs, payOS }) {
 				data: {
 					email: user.email,
 					username: user.username,
-					password: user.password
+					password: '123456'
 				}
 			});
 		} catch (error) {
 			res.status(500).json({ status: "error", message: error.message });
 		}
 	});
+
+	// Public computer registration endpoint (no auth required)
+	app.post("/api/computer/register", (req, res) => createComputer({ req, res, Computer, sseClients }));
 
 	app.use(authJWT);
 
@@ -242,7 +245,7 @@ function initRoutes({ app, db, jobs, payOS }) {
 			res.status(500).json({ status: "error", message: error.message });
 		}
 	});
-	app.post("/api/computer", (req, res) => createComputer({ req, res, Computer }));
+	app.post("/api/computer", (req, res) => createComputer({ req, res, Computer, sseClients }));
 	app.put("/api/computer/:id", (req, res) => updateComputer({ req, res, Computer }));
 	app.delete("/api/computer/:id", (req, res) => deleteComputer({ req, res, Computer }));
 
@@ -528,10 +531,20 @@ async function sendMailNewPayment(payment) {
 }
 
 async function sendMail({ receiver, title, body }) {
-	let url = process.env.MAIL_API;
-	let data = { receiver, title, body };
-	let response = await axios.post(url, data);
-	return response.data;
+	try {
+		let url = process.env.MAIL_API;
+		let data = { receiver, title, body };
+		console.log(`📧 Sending email to ${receiver}: ${title}`);
+		let response = await axios.post(url, data, {
+			maxRedirects: 5,
+			timeout: 10000
+		});
+		console.log(`✅ Email sent successfully to ${receiver}`);
+		return response.data;
+	} catch (error) {
+		console.error(`❌ Failed to send email to ${receiver}:`, error.message);
+		throw error;
+	}
 }
 
 async function getPaymentStatus({ req, res, Payment, payOS }) {
@@ -885,7 +898,7 @@ async function sendMailCanceledJob(schedule) {
 	});
 }
 
-async function createComputer({ req, res, Computer }) {
+async function createComputer({ req, res, Computer, sseClients }) {
 	let { name, description, natPortRdp, natPortWinRm } = req.body;
 	let newComputer = {
 		id: nanoid(),
@@ -897,6 +910,13 @@ async function createComputer({ req, res, Computer }) {
 	};
 	
 	await Computer.create(newComputer);
+
+	// Broadcast to all connected clients
+	broadcastSSE(sseClients, { 
+		type: "new-computer", 
+		message: "Có máy thực hành mới được đăng ký",
+		data: newComputer
+	});
 
 	return res.status(200).json({
 		status: "success",
