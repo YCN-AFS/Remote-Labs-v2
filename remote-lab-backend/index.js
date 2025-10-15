@@ -219,7 +219,22 @@ function initRoutes({ app, db, jobs, payOS }) {
 	app.get("/api/payment", async (req, res) => {
 		try {
 			const payments = await Payment.findAll();
-			res.status(200).json({ status: "success", data: payments });
+			// Map database fields to API response format
+			const mappedPayments = payments.map(payment => {
+				// Split full_name into firstName and lastName
+				const nameParts = (payment.full_name || '').split(' ');
+				const firstName = nameParts[0] || '';
+				const lastName = nameParts.slice(1).join(' ') || '';
+				
+				return {
+					...payment,
+					firstName: firstName,
+					lastName: lastName,
+					orderCode: payment.order_code,
+					createdAt: payment.created_at
+				};
+			});
+			res.status(200).json({ status: "success", data: mappedPayments });
 		} catch (error) {
 			res.status(500).json({ status: "error", message: error.message });
 		}
@@ -228,7 +243,16 @@ function initRoutes({ app, db, jobs, payOS }) {
 	app.get("/api/schedule", async (req, res) => {
 		try {
 			const schedules = await Schedule.findAll();
-			res.status(200).json({ status: "success", data: schedules });
+			// Map database fields to API response format
+			const mappedSchedules = schedules.map(schedule => ({
+				...schedule,
+				userName: schedule.user_name,
+				startTime: schedule.start_time,
+				endTime: schedule.end_time,
+				computerId: schedule.computer_id,
+				natPortRdp: schedule.nat_port_rdp
+			}));
+			res.status(200).json({ status: "success", data: mappedSchedules });
 		} catch (error) {
 			res.status(500).json({ status: "error", message: error.message });
 		}
@@ -240,7 +264,14 @@ function initRoutes({ app, db, jobs, payOS }) {
 	app.get("/api/computer", async (req, res) => {
 		try {
 			const computers = await Computer.findAll();
-			res.status(200).json({ status: "success", data: computers });
+			// Map database fields to API response format
+			const mappedComputers = computers.map(computer => ({
+				...computer,
+				natPortRdp: computer.nat_port_rdp,
+				natPortWinRm: computer.nat_port_winrm,
+				createdAt: computer.created_at
+			}));
+			res.status(200).json({ status: "success", data: mappedComputers });
 		} catch (error) {
 			res.status(500).json({ status: "error", message: error.message });
 		}
@@ -884,9 +915,18 @@ async function pwsh(cmd, { port = 5985 }) {
 async function findApprovedSchedule({ req, res, Schedule }) {
 	let email = req.params.email;
 	let schedules = await Schedule.findApprovedByEmail(email);
+	// Map database fields to API response format
+	const mappedSchedules = schedules.map(schedule => ({
+		...schedule,
+		userName: schedule.user_name,
+		startTime: schedule.start_time,
+		endTime: schedule.end_time,
+		computerId: schedule.computer_id,
+		natPortRdp: schedule.nat_port_rdp
+	}));
 	return res.status(200).json({
 		status: "success",
-		data: schedules
+		data: mappedSchedules
 	});
 }
 
@@ -950,10 +990,18 @@ async function createComputer({ req, res, Computer, sseClients }) {
 		data: newComputer
 	});
 
+	// Map database fields to API response format
+	const mappedComputer = {
+		...newComputer,
+		natPortRdp: newComputer.nat_port_rdp,
+		natPortWinRm: newComputer.nat_port_winrm,
+		createdAt: newComputer.created_at
+	};
+
 	return res.status(200).json({
 		status: "success",
 		message: "Đã thêm máy tính vào hệ thống",
-		data: newComputer
+		data: mappedComputer
 	});
 }
 
@@ -971,9 +1019,21 @@ async function updateComputer({ req, res, Computer }) {
 		nat_port_winrm: natPortWinRm
 	});
 
+	// Get updated computer data
+	const updatedComputer = await Computer.findById(id);
+	
+	// Map database fields to API response format
+	const mappedComputer = {
+		...updatedComputer,
+		natPortRdp: updatedComputer.nat_port_rdp,
+		natPortWinRm: updatedComputer.nat_port_winrm,
+		createdAt: updatedComputer.created_at
+	};
+
 	return res.status(200).json({
 		status: "success",
-		message: "Đã cập nhật thông tin máy tính"
+		message: "Đã cập nhật thông tin máy tính",
+		data: mappedComputer
 	});
 }
 
