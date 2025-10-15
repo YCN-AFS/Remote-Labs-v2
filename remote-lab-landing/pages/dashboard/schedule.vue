@@ -67,6 +67,12 @@
 
 	async function approveItem() {
 		try {
+			// Validate computerId before proceeding
+			if (!computerId.value) {
+				swal.fire('Lỗi', 'Vui lòng chọn máy tính để thực hành', 'error');
+				return;
+			}
+
 			swal.fire({
 				title: 'Xác nhận',
 				text: 'Bạn có muốn chấp nhận lịch đăng ký này?',
@@ -84,18 +90,31 @@
 					didOpen: () => swal.showLoading()
 				});
 
-				const token = useCookie('access_token').value;
-				const header = { headers: { Authorization: `Bearer ${token}` } };
-				const id = itemSelected.value.id;
-				const url = `${API_BASE_URL}/api/schedule/${id}/approve`;
-				const body = { computerId: computerId.value };
-				const response = await axios.post(url, body, header);
-				fetchItems();
-
-				swal.close();
-				swal.fire('Thành công', 'Chấp nhận lịch đăng ký thành công', 'success');
-
-				document.querySelector('#modal_approve').checked = false;
+				try {
+					const token = useCookie('access_token').value;
+					const header = { headers: { Authorization: `Bearer ${token}` } };
+					const id = itemSelected.value.id;
+					const url = `${API_BASE_URL}/api/schedule/${id}/approve`;
+					const body = { computerId: computerId.value };
+					const response = await axios.post(url, body, header);
+					
+					// Check if response is successful
+					if (response.data.status === 'success') {
+						fetchItems();
+						swal.close();
+						swal.fire('Thành công', 'Chấp nhận lịch đăng ký thành công', 'success');
+						document.querySelector('#modal_approve').checked = false;
+						// Reset computerId after successful approval
+						computerId.value = null;
+					} else {
+						swal.close();
+						swal.fire('Lỗi', response.data.message || 'Có lỗi xảy ra', 'error');
+					}
+				} catch (error) {
+					swal.close();
+					const errorMessage = error.response?.data?.message || error.message || 'Có lỗi xảy ra khi phê duyệt lịch';
+					swal.fire('Lỗi', errorMessage, 'error');
+				}
 			});
 		}
 		catch (error) {
@@ -172,9 +191,12 @@
 			<form class="z-10 rounded-lg border p-6 max-w-md w-full flex flex-col gap-6 bg-white" @submit.prevent="approveItem">
 				<h2 class="text-xl font-bold">Chọn máy tính để thực hành</h2>
 				<div class="flex flex-col gap-3">
-					<label for="computer-id">PC thực hành</label>
-					<select name="computer-id" id="computer-id" class="rounded border px-3 py-2" v-model="computerId">
-						<option v-for="item in computers" :value="item.id">{{ item.name }}</option>
+					<label for="computer-id">PC thực hành <span class="text-red-500">*</span></label>
+					<select name="computer-id" id="computer-id" class="rounded border px-3 py-2" v-model="computerId" required>
+						<option value="" disabled>-- Chọn máy tính --</option>
+						<option v-for="item in computers" :value="item.id" :disabled="item.status !== 'available'">
+							{{ item.name }} {{ item.status !== 'available' ? '(Đang sử dụng)' : '' }}
+						</option>
 					</select>
 				</div>
 				<div class="flex justify-end items-center gap-3">

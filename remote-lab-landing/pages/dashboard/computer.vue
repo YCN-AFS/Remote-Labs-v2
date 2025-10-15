@@ -54,6 +54,25 @@
 		fetchItems();
 	});
 
+	onMounted(() => {
+		// Listen for real-time updates via SSE
+		let source = new EventSource(`${API_BASE_URL}/sse`);
+		source.addEventListener('message', message => {
+			let data = JSON.parse(message.data);
+			if (data.type === 'new-computer') {
+				// Refresh the computer list when a new computer is registered
+				fetchItems();
+				swal.fire({
+					icon: 'success',
+					title: 'Máy mới đã đăng ký',
+					text: `Máy "${data.data.name}" đã được thêm vào hệ thống`,
+					timer: 3000,
+					showConfirmButton: false
+				});
+			}
+		});
+	});
+
 	// create computer
 	async function createItem() {
 		if (isLoadingCreate.value) return;

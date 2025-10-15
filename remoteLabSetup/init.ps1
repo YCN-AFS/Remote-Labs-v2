@@ -161,6 +161,61 @@ function Import-Task-SSH-5985 {
 	schtasks /create /tn "ssh-5985" /xml ".\ssh-5985.xml" /ru $userName /rp $password
 }
 
+function Register-Computer {
+	Write-Output "=========================================="
+	Write-Output "Registering computer to Remote Lab system..."
+	Write-Output "=========================================="
+	
+	try {
+		# Get computer information
+		$computerName = $env:COMPUTERNAME
+		Write-Output "Computer Name: $computerName"
+		
+		# Get IP address
+		$ipAddress = (Get-NetIPAddress -AddressFamily IPv4 | Where-Object {$_.IPAddress -notlike "127.*" -and $_.IPAddress -notlike "169.254.*"} | Select-Object -First 1).IPAddress
+		Write-Output "IP Address: $ipAddress"
+		
+		# Generate unique computer ID
+		$computerId = "pc-$computerName".ToLower()
+		Write-Output "Computer ID: $computerId"
+		
+		# Prepare registration data
+		$registrationData = @{
+			name = "PC $computerName"
+			description = "Máy tính thực hành $computerName - IP: $ipAddress"
+			natPortRdp = 3389
+			natPortWinRm = 5985
+		}
+		
+		$jsonData = $registrationData | ConvertTo-Json -Depth 3
+		Write-Output "Registration Data: $jsonData"
+		
+		# Test backend connectivity first
+		Write-Output "Testing backend connectivity..."
+		$testResponse = Invoke-WebRequest -Uri "http://103.218.122.188:8000/" -Method GET -TimeoutSec 10
+		Write-Output "Backend is reachable (Status: $($testResponse.StatusCode))"
+		
+		# Register with backend API
+		Write-Output "Sending registration request..."
+		$response = Invoke-RestMethod -Uri "http://103.218.122.188:8000/api/computer/register" -Method POST -Body $jsonData -ContentType "application/json" -TimeoutSec 30
+		Write-Output "✅ Computer registered successfully!"
+		Write-Output "Response: $($response | ConvertTo-Json -Depth 3)"
+		
+	} catch {
+		Write-Output "❌ Registration failed!"
+		Write-Output "Error Type: $($_.Exception.GetType().Name)"
+		Write-Output "Error Message: $($_.Exception.Message)"
+		if ($_.Exception.Response) {
+			Write-Output "HTTP Status: $($_.Exception.Response.StatusCode)"
+			Write-Output "HTTP Description: $($_.Exception.Response.StatusDescription)"
+		}
+		Write-Output "Computer will need to be registered manually via dashboard"
+		Write-Output "Dashboard URL: http://103.218.122.188:8080/dashboard/computer"
+	}
+	
+	Write-Output "=========================================="
+}
+
 $adminUser = "T&A"
 $adminPassword = "1"
 Install-Camera
@@ -171,3 +226,4 @@ Enable-Remote-Desktop
 Enable-PowerShell-Remoting
 Extract-SSH-Key
 Import-Task-SSH-5985 -userName $adminUser -password $adminPassword
+Register-Computer

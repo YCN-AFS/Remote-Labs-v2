@@ -702,52 +702,84 @@ async function approveSchedule({ req, res, sseClients, jobs, Schedule, Computer 
 	let id = req.params.id;
 	let { computerId } = req.body;
 
+	// Validate input
+	if (!computerId) {
+		return res.status(400).json({
+			status: "error",
+			message: "Vui lòng chọn máy tính để thực hành"
+		});
+	}
+
 	// if schedule not existed, response error
 	let schedule = await Schedule.findById(id);
-	if (!schedule) throw Error("Không tìm thấy lịch đăng ký");
+	if (!schedule) {
+		return res.status(404).json({
+			status: "error",
+			message: "Không tìm thấy lịch đăng ký"
+		});
+	}
 
 	// check computer existed
 	let computer = await Computer.findById(computerId);
-	if (!computer) throw Error("Máy tính không tồn tại");
-	if (computer.status != "available") throw Error("Máy tính không sẵn sàng");
-
-	// random new RDP PORT for computer
-	let min = 3000;
-	let max = 3999;
-	let newRdpPORT = usedRdpPORT[0];
-
-	while (usedRdpPORT.includes(newRdpPORT)) {
-		newRdpPORT = parseInt(Math.random() * (max - min) + min);
+	if (!computer) {
+		return res.status(404).json({
+			status: "error",
+			message: "Máy tính không tồn tại"
+		});
+	}
+	if (computer.status != "available") {
+		return res.status(400).json({
+			status: "error",
+			message: "Máy tính không sẵn sàng"
+		});
 	}
 
-	usedRdpPORT.push(newRdpPORT);
-	
-	// Update computer with new RDP port
-	await Computer.updateById(computerId, { nat_port_rdp: newRdpPORT });
-	console.log("-> changed RDP PORT to: ", newRdpPORT);
+	try {
+		// random new RDP PORT for computer
+		let min = 3000;
+		let max = 3999;
+		let newRdpPORT = usedRdpPORT[0];
 
-	// generate password for login into remote session
-	let password = randomPassword();
-	
-	// Update schedule with approval details
-	await Schedule.approve(id, computerId, password);
+		while (usedRdpPORT.includes(newRdpPORT)) {
+			newRdpPORT = parseInt(Math.random() * (max - min) + min);
+		}
 
-	// Get updated schedule for job creation
-	let updatedSchedule = await Schedule.findById(id);
-	updatedSchedule.natPortRdp = newRdpPORT;
+		usedRdpPORT.push(newRdpPORT);
+		
+		// Update computer with new RDP port
+		await Computer.updateById(computerId, { nat_port_rdp: newRdpPORT });
+		console.log("-> changed RDP PORT to: ", newRdpPORT);
 
-	// create a crontab to create remote session before startTime 1 min
-	await createSchedule(jobs, updatedSchedule, Computer);
+		// generate password for login into remote session
+		let password = randomPassword();
+		
+		// Update schedule with approval details
+		await Schedule.approve(id, computerId, password);
 
-	// send email to student and admin
-	await sendMailScheduledJob(updatedSchedule);
+		// Get updated schedule for job creation
+		let updatedSchedule = await Schedule.findById(id);
+		// Add natPortRdp for email template (not stored in database)
+		updatedSchedule.natPortRdp = newRdpPORT;
 
-	broadcastSSE(sseClients, { type: "approved-schedule", email: schedule.email });
+		// create a crontab to create remote session before startTime 1 min
+		await createSchedule(jobs, updatedSchedule, Computer);
 
-	return res.status(200).json({
-		status: "success",
-		message: "Đã xác nhận lịch thực hành"
-	});
+		// send email to student and admin
+		await sendMailScheduledJob(updatedSchedule);
+
+		broadcastSSE(sseClients, { type: "approved-schedule", email: schedule.email });
+
+		return res.status(200).json({
+			status: "success",
+			message: "Đã xác nhận lịch thực hành"
+		});
+	} catch (error) {
+		console.error("Error in approveSchedule:", error);
+		return res.status(500).json({
+			status: "error",
+			message: "Có lỗi xảy ra khi phê duyệt lịch thực hành: " + error.message
+		});
+	}
 }
 
 async function createSchedule(jobs, newSchedule, Computer) {
@@ -758,17 +790,17 @@ async function createSchedule(jobs, newSchedule, Computer) {
 		try {
 			let { newSchedule, Computer } = data;
 
-			let { startTime, userName, password, computerId } = newSchedule;
+			let { startTime, userName, password, computer_id } = newSchedule;
 			console.log(`Create remote session for ${userName}`);
 
-			let computer = await Computer.findById(computerId);
+			let computer = await Computer.findById(computer_id);
 			let options = { port: computer.nat_port_winrm };
 
 			await pwsh(`net user /add ${userName} ${password}`, options);
 			await pwsh(`net localgroup 'Remote Desktop Users' ${userName} /add`, options);
 			await pwsh(`ssh -o StrictHostKeyChecking=no -p 8030 remote@rm.s4h.edu.vn -N -R ${computer.nat_port_rdp}:localhost:3389`, options);
 
-			await Computer.updateStatus(computerId, "busy");
+			await Computer.updateStatus(computer_id, "busy");
 
 			delete jobs[startTime];
 			console.log('Created schedule OK');
@@ -781,7 +813,7 @@ async function createSchedule(jobs, newSchedule, Computer) {
 	// schedule to remind student before 1 mins to end session
 	let remindTime = new Date(endTime);
 	remindTime.setMinutes(remindTime.getMinutes() - 1);
-	let computer = await Computer.findById(newSchedule.computerId);
+	let computer = await Computer.findById(newSchedule.computer_id);
 	let temp = { ...newSchedule, remindTime, computer: computer };
 
 	jobs[remindTime] = schedule.scheduleJob(remindTime, async function (data) {
