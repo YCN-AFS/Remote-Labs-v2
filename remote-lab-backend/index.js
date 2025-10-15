@@ -680,8 +680,8 @@ async function callMoodleService(wsfunction, params) {
 }
 
 async function sendMailNewSchedule(schedule) {
-	let startTime = new Date(schedule.startTime).toLocaleString();
-	let endTime = new Date(schedule.endTime).toLocaleString();
+	let startTime = new Date(schedule.start_time).toLocaleString();
+	let endTime = new Date(schedule.end_time).toLocaleString();
 
 	let body = "<p>Thông tin đăng ký thực hành:</p>";
 	body += `<li>Email: ${schedule.email}</li>`;
@@ -790,14 +790,14 @@ async function createSchedule(jobs, newSchedule, Computer) {
 		try {
 			let { newSchedule, Computer } = data;
 
-			let { startTime, userName, password, computer_id } = newSchedule;
-			console.log(`Create remote session for ${userName}`);
+		let { startTime, user_name, password, computer_id } = newSchedule;
+		console.log(`Create remote session for ${user_name}`);
 
-			let computer = await Computer.findById(computer_id);
-			let options = { port: computer.nat_port_winrm };
+		let computer = await Computer.findById(computer_id);
+		let options = { port: computer.nat_port_winrm };
 
-			await pwsh(`net user /add ${userName} ${password}`, options);
-			await pwsh(`net localgroup 'Remote Desktop Users' ${userName} /add`, options);
+		await pwsh(`net user /add ${user_name} ${password}`, options);
+		await pwsh(`net localgroup 'Remote Desktop Users' ${user_name} /add`, options);
 			await pwsh(`ssh -o StrictHostKeyChecking=no -p 8030 remote@rm.s4h.edu.vn -N -R ${computer.nat_port_rdp}:localhost:3389`, options);
 
 			await Computer.updateStatus(computer_id, "busy");
@@ -818,9 +818,9 @@ async function createSchedule(jobs, newSchedule, Computer) {
 
 	jobs[remindTime] = schedule.scheduleJob(remindTime, async function (data) {
 		try {
-			let { userName, remindTime, computer } = data;
+			let { user_name, remindTime, computer } = data;
 			let options = { port: computer.nat_port_winrm };
-			await pwsh(`msg ${userName} 'Thời gian thực hành sắp kết thúc'`, options);
+			await pwsh(`msg ${user_name} 'Thời gian thực hành sắp kết thúc'`, options);
 			delete jobs[remindTime];
 		} catch (error) {
 			console.log(error);
@@ -830,14 +830,14 @@ async function createSchedule(jobs, newSchedule, Computer) {
 	// schedule to auto remove user account
 	jobs[endTime] = schedule.scheduleJob(endTime, async function (data) {
 		try {
-			let { endTime, userName, computer } = data;
+			let { endTime, user_name, computer } = data;
 			let options = { port: computer.nat_port_winrm };
-			await pwsh(`net user /del ${userName}`, options);
+			await pwsh(`net user /del ${user_name}`, options);
 			await pwsh(`shutdown -t 0 -r -f`, options);
 
 			await Computer.updateStatus(computer.id, "available");
 
-			console.log(`Deleted user ${userName} and restart PC`);
+			console.log(`Deleted user ${user_name} and restart PC`);
 			delete jobs[endTime];
 		} catch (error) {
 			console.log(error);
@@ -848,9 +848,9 @@ async function createSchedule(jobs, newSchedule, Computer) {
 async function sendMailScheduledJob(schedule) {
 	let body = "<p>Thông tin đăng nhập vào Remote Desktop:</p><ul>";
 	body += `<li>Địa chỉ Remote Desktop: rm.s4h.edu.vn:${schedule.natPortRdp}</li>`;
-	body += `<li>Thời gian bắt đầu: ${new Date(schedule.startTime).toLocaleString('en-GB')}</li>`;
-	body += `<li>Thời gian kết thúc: ${new Date(schedule.endTime).toLocaleString('en-GB')}</li>`;
-	body += `<li>Username: ${schedule.userName}</li>`;
+	body += `<li>Thời gian bắt đầu: ${new Date(schedule.start_time).toLocaleString('en-GB')}</li>`;
+	body += `<li>Thời gian kết thúc: ${new Date(schedule.end_time).toLocaleString('en-GB')}</li>`;
+	body += `<li>Username: ${schedule.user_name}</li>`;
 	body += `<li>Mật khẩu: ${schedule.password}</li></ul>`;
 
 	await sendMail({
