@@ -38,10 +38,10 @@ function Install-VSCode {
 	Write-Output "Removing downloaded file..."
 	Remove-Item -Path $destinationPath -Force
 
-	# Create shortcuts for all users
+	# Create shortcuts for current user only
 	Write-Output "Creating shortcuts..."
-	$shortcutPathDesktop = "$env:PUBLIC\Desktop\Visual Studio Code.lnk"
-	$shortcutPathStartMenu = "$env:ProgramData\Microsoft\Windows\Start Menu\Programs\Visual Studio Code.lnk"
+	$shortcutPathDesktop = "$env:USERPROFILE\Desktop\Visual Studio Code.lnk"
+	$shortcutPathStartMenu = "$env:APPDATA\Microsoft\Windows\Start Menu\Programs\Visual Studio Code.lnk"
 	$exePath = "C:\Program Files\Microsoft VS Code\Code.exe"
 
 	Create-Shortcut -shortcutPath $shortcutPathDesktop -targetPath $exePath
@@ -56,13 +56,13 @@ function Install-Arduino {
 	# Define the download URL and paths
 	$downloadUrl = "https://downloads.arduino.cc/arduino-ide/arduino-ide_latest_Windows_64bit.zip"
 	$destinationPath = "$env:USERPROFILE\Downloads\arduino-ide-latest.zip"
-	$installPath = "C:\Program Files\Arduino"
+	$installPath = "$env:USERPROFILE\Arduino"
 
 	# Download the Arduino ZIP file
 	Write-Output "Downloading Arduino IDE..."
 	Download-File -downloadUrl $downloadUrl -destinationPath $destinationPath
 
-	# Extract the ZIP to C:\Program Files
+	# Extract the ZIP to user directory
 	Write-Output "Extracting Arduino IDE..."
 	Expand-Archive -Path $destinationPath -DestinationPath $installPath -Force
 
@@ -70,16 +70,16 @@ function Install-Arduino {
 	Write-Output "Removing downloaded file..."
 	Remove-Item -Path $destinationPath -Force
 
-	# Create shortcuts for all users
+	# Create shortcuts for current user only
 	Write-Output "Creating shortcuts..."
-	$shortcutPathDesktop = "$env:PUBLIC\Desktop\Arduino IDE.lnk"
-	$shortcutPathStartMenu = "$env:ProgramData\Microsoft\Windows\Start Menu\Programs\Arduino IDE.lnk"
+	$shortcutPathDesktop = "$env:USERPROFILE\Desktop\Arduino IDE.lnk"
+	$shortcutPathStartMenu = "$env:APPDATA\Microsoft\Windows\Start Menu\Programs\Arduino IDE.lnk"
 	$exePath = "$installPath\Arduino IDE.exe"
 
 	Create-Shortcut -shortcutPath $shortcutPathDesktop -targetPath $exePath
 	Create-Shortcut -shortcutPath $shortcutPathStartMenu -targetPath $exePath
 
-	Write-Output "Arduino IDE installed system-wide successfully."
+	Write-Output "Arduino IDE installed successfully."
 
 	# Open Arduino IDE
 	Write-Output "Opening Arduino IDE..."
@@ -88,24 +88,24 @@ function Install-Arduino {
 
 function Install-Camera {
 	$destinationPath = ".\remote-lab-camera.zip"
-	$installPath = "C:\Program Files\remote-lab-camera"
+	$installPath = "$env:USERPROFILE\remote-lab-camera"
 
-	# Extract the ZIP to C:\Program Files
+	# Extract the ZIP to user directory
 	Write-Output "Extracting Camera Viewer..."
 	Expand-Archive -Path $destinationPath -DestinationPath $installPath -Force
 
-	# Create shortcuts for all users
+	# Create shortcuts for current user only
 	Write-Output "Creating shortcuts..."
-	$shortcutPathDesktop = "$env:PUBLIC\Desktop\Camera Viewer.lnk"
-	$shortcutPathStartMenu = "$env:ProgramData\Microsoft\Windows\Start Menu\Programs\Camera Viewer.lnk"
+	$shortcutPathDesktop = "$env:USERPROFILE\Desktop\Camera Viewer.lnk"
+	$shortcutPathStartMenu = "$env:APPDATA\Microsoft\Windows\Start Menu\Programs\Camera Viewer.lnk"
 	$exePath = "$installPath\remote-lab-camera\remote-lab-camera.exe"
 
 	Create-Shortcut -shortcutPath $shortcutPathDesktop -targetPath $exePath
 	Create-Shortcut -shortcutPath $shortcutPathStartMenu -targetPath $exePath
 
-	Write-Output "Camera Viewer installed system-wide successfully."
+	Write-Output "Camera Viewer installed successfully."
 
-	# Open Arduino IDE
+	# Open Camera Viewer
 	Write-Output "Opening Camera Viewer..."
 	Start-Process -FilePath $exePath -NoNewWindow
 }
@@ -161,8 +161,8 @@ function Import-Task-SSH-5985 {
 	schtasks /create /tn "ssh-5985" /xml ".\ssh-5985.xml" /ru $userName /rp $password
 }
 
-$adminUser = "Admin"
-$adminPassword = "lhu@B304"
+$adminUser = "T&A"
+$adminPassword = "1"
 Install-Camera
 Install-VSCode
 Install-Arduino
