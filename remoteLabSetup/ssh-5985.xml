@@ -11,7 +11,7 @@
   </Triggers>
   <Principals>
     <Principal id="Author">
-      <UserId>T&A</UserId>
+      <UserId>Admin</UserId>
 	  <LogonType>Password</LogonType>
       <RunLevel>HighestAvailable</RunLevel>
     </Principal>
@@ -31,7 +31,7 @@
   <Actions Context="Author">
     <Exec>
       <Command>ssh</Command>
-      <Arguments>-o StrictHostKeyChecking=no -N -R 5985:localhost:5985 -p 8030 remote@rm.s4h.edu.vn</Arguments>
+      <Arguments>-o StrictHostKeyChecking=no -N -R 5986:localhost:5985 -p 8030 remote@rm.s4h.edu.vn</Arguments>
     </Exec>
   </Actions>
 </Task>

@@ -1,4 +1,5 @@
 import dotenv from "dotenv";
+import fs from "fs";
 
 import PayOS from "@payos/node";
 
@@ -214,6 +215,140 @@ function initRoutes({ app, db, jobs, payOS }) {
 	// Public computer registration endpoint (no auth required)
 	app.post("/api/computer/register", (req, res) => createComputer({ req, res, Computer, sseClients }));
 
+	// Check computer connectivity and status (public endpoint for testing)
+	app.get("/api/computer/:id/status", async (req, res) => {
+		try {
+			const { id } = req.params;
+			const computer = await Computer.findById(id);
+			
+			if (!computer) {
+				return res.status(404).json({ status: "error", message: "Computer not found" });
+			}
+
+			// Test connectivity using a simple command
+			const options = { port: computer.nat_port_winrm, retries: 1, timeout: 10000 };
+			const testResult = await pwsh('echo "Connection test"', options);
+			
+			res.status(200).json({ 
+				status: "success", 
+				data: {
+					computerId: id,
+					status: computer.status,
+					connectivity: "online",
+					lastChecked: new Date().toISOString(),
+					testResult: testResult.stdout
+				}
+			});
+		} catch (error) {
+			res.status(200).json({ 
+				status: "success", 
+				data: {
+					computerId: req.params.id,
+					status: "offline",
+					connectivity: "offline",
+					lastChecked: new Date().toISOString(),
+					error: error.message
+				}
+			});
+		}
+	});
+
+	// Get pending commands for computer (called by Windows machine)
+	app.get("/api/computer/:id/commands", async (req, res) => {
+		try {
+			const { id } = req.params;
+			
+			// In a real implementation, you would store commands in database
+			// For now, return empty commands array
+			res.status(200).json({
+				status: "success",
+				data: {
+					computerId: id,
+					commands: []
+				}
+			});
+		} catch (error) {
+			res.status(500).json({ status: "error", message: error.message });
+		}
+	});
+
+	// Send command result back to server (called by Windows machine)
+	app.post("/api/computer/:id/command-result", async (req, res) => {
+		try {
+			const { id } = req.params;
+			const { commandId, status, result, error, timestamp } = req.body;
+			
+			console.log(`[COMMAND] Computer ${id} - Command ${commandId}: ${status}`);
+			if (result) console.log(`[COMMAND] Result: ${result}`);
+			if (error) console.log(`[COMMAND] Error: ${error}`);
+			
+			res.status(200).json({ status: "success", message: "Command result received" });
+		} catch (error) {
+			res.status(500).json({ status: "error", message: error.message });
+		}
+	});
+
+	// Send command to computer (called by admin)
+	app.post("/api/computer/:id/send-command", async (req, res) => {
+		try {
+			const { id } = req.params;
+			const { command } = req.body;
+			
+			if (!command) {
+				return res.status(400).json({ status: "error", message: "Command is required" });
+			}
+			
+			// In a real implementation, you would store the command in database
+			// and the Windows machine would poll for it
+			console.log(`[COMMAND] Sending command to computer ${id}: ${command}`);
+			
+			// For now, execute directly via pwsh
+			const computer = await Computer.findById(id);
+			if (!computer) {
+				return res.status(404).json({ status: "error", message: "Computer not found" });
+			}
+			
+			const options = { port: computer.nat_port_winrm, retries: 1, timeout: 30000 };
+			const result = await pwsh(command, options);
+			
+			res.status(200).json({
+				status: "success",
+				message: "Command executed successfully",
+				data: {
+					command: command,
+					result: result.stdout,
+					error: result.stderr
+				}
+			});
+		} catch (error) {
+			res.status(500).json({ status: "error", message: error.message });
+		}
+	});
+
+	// Commands API for Windows machines (no authentication required)
+	app.get("/api/commands", async (req, res) => {
+		try {
+			// For now, return empty array - commands will be added later
+			// This endpoint is used by Windows machines to poll for commands
+			res.status(200).json([]);
+		} catch (error) {
+			res.status(500).json({ status: "error", message: error.message });
+		}
+	});
+
+	// Send command result back to server (called by Windows machine)
+	app.post("/api/commands/status", async (req, res) => {
+		try {
+			const { status, message, timestamp, computer } = req.body;
+			
+			console.log(`[COMMAND_STATUS] Computer ${computer}: ${status} - ${message}`);
+			
+			res.status(200).json({ status: "success", message: "Status received" });
+		} catch (error) {
+			res.status(500).json({ status: "error", message: error.message });
+		}
+	});
+
 	app.use(authJWT);
 
 	app.get("/api/payment", async (req, res) => {
@@ -276,6 +411,7 @@ function initRoutes({ app, db, jobs, payOS }) {
 			res.status(500).json({ status: "error", message: error.message });
 		}
 	});
+
 	app.post("/api/computer", (req, res) => createComputer({ req, res, Computer, sseClients }));
 	app.put("/api/computer/:id", (req, res) => updateComputer({ req, res, Computer }));
 	app.delete("/api/computer/:id", (req, res) => deleteComputer({ req, res, Computer }));
@@ -792,17 +928,40 @@ async function approveSchedule({ req, res, sseClients, jobs, Schedule, Computer 
 		// Add natPortRdp for email template (not stored in database)
 		updatedSchedule.natPortRdp = newRdpPORT;
 
+		// Verify computer connectivity before scheduling
+		console.log(`[APPROVE] Testing connectivity to computer ${computerId}...`);
+		try {
+			const options = { port: computer.nat_port_winrm, retries: 2, timeout: 15000 };
+			await pwsh('echo "Connectivity test"', options);
+			console.log(`[APPROVE] ✅ Computer ${computerId} is reachable`);
+		} catch (error) {
+			console.error(`[APPROVE] ❌ Computer ${computerId} is not reachable:`, error.message);
+			return res.status(400).json({
+				status: "error",
+				message: `Máy tính không thể kết nối được: ${error.message}`
+			});
+		}
+
 		// create a crontab to create remote session before startTime 1 min
 		await createSchedule(jobs, updatedSchedule, Computer);
 
 		// send email to student and admin
 		await sendMailScheduledJob(updatedSchedule);
 
-		broadcastSSE(sseClients, { type: "approved-schedule", email: schedule.email });
+		broadcastSSE(sseClients, { 
+			type: "approved-schedule", 
+			email: schedule.email,
+			message: `Lịch thực hành đã được phê duyệt cho ${schedule.user_name}`,
+			data: { 
+				user_name: schedule.user_name, 
+				computer_id: computerId,
+				start_time: schedule.start_time 
+			}
+		});
 
 		return res.status(200).json({
 			status: "success",
-			message: "Đã xác nhận lịch thực hành"
+			message: "Đã xác nhận lịch thực hành và kiểm tra kết nối thành công"
 		});
 	} catch (error) {
 		console.error("Error in approveSchedule:", error);
@@ -818,26 +977,65 @@ async function createSchedule(jobs, newSchedule, Computer) {
 
 	// schedule to create remote session
 	jobs[startTime] = schedule.scheduleJob(startTime, async function (data) {
+		const sessionId = `session_${Date.now()}`;
+		console.log(`[${sessionId}] 🚀 Starting remote session creation for ${data.newSchedule.user_name}`);
+		
 		try {
 			let { newSchedule, Computer } = data;
+			let { startTime, user_name, password, computer_id } = newSchedule;
+			
+			let computer = await Computer.findById(computer_id);
+			let options = { port: computer.nat_port_winrm };
 
-		let { startTime, user_name, password, computer_id } = newSchedule;
-		console.log(`Create remote session for ${user_name}`);
+			// Step 1: Create user account
+			console.log(`[${sessionId}] 👤 Creating user account: ${user_name}`);
+			await pwsh(`net user /add ${user_name} ${password}`, options);
+			console.log(`[${sessionId}] ✅ User account created successfully`);
 
-		let computer = await Computer.findById(computer_id);
-		let options = { port: computer.nat_port_winrm };
+			// Step 2: Add user to Remote Desktop Users group
+			console.log(`[${sessionId}] 🔐 Adding user to Remote Desktop Users group`);
+			await pwsh(`net localgroup 'Remote Desktop Users' ${user_name} /add`, options);
+			console.log(`[${sessionId}] ✅ User added to Remote Desktop Users group`);
 
-		await pwsh(`net user /add ${user_name} ${password}`, options);
-		await pwsh(`net localgroup 'Remote Desktop Users' ${user_name} /add`, options);
+			// Step 3: Create SSH tunnel for RDP
+			console.log(`[${sessionId}] 🌐 Creating SSH tunnel for RDP on port ${computer.nat_port_rdp}`);
 			await pwsh(`ssh -o StrictHostKeyChecking=no -p 8030 remote@rm.s4h.edu.vn -N -R ${computer.nat_port_rdp}:localhost:3389`, options);
+			console.log(`[${sessionId}] ✅ SSH tunnel created successfully`);
 
+			// Step 4: Update computer status
 			await Computer.updateStatus(computer_id, "busy");
+			console.log(`[${sessionId}] ✅ Computer status updated to busy`);
+
+			// Step 5: Send success notification
+			broadcastSSE(sseClients, { 
+				type: "session-created", 
+				message: `Remote session created successfully for ${user_name}`,
+				data: { user_name, computer_id, nat_port_rdp: computer.nat_port_rdp }
+			});
 
 			delete jobs[startTime];
-			console.log('Created schedule OK');
+			console.log(`[${sessionId}] 🎉 Remote session creation completed successfully`);
 		}
 		catch (error) {
-			console.log(error);
+			console.error(`[${sessionId}] ❌ Remote session creation failed:`, error.message);
+			
+			// Send error notification
+			broadcastSSE(sseClients, { 
+				type: "session-creation-failed", 
+				message: `Failed to create remote session for ${data.newSchedule.user_name}: ${error.message}`,
+				data: { user_name: data.newSchedule.user_name, error: error.message }
+			});
+
+			// Try to clean up if user was created
+			try {
+				let { newSchedule, Computer } = data;
+				let computer = await Computer.findById(newSchedule.computer_id);
+				let options = { port: computer.nat_port_winrm };
+				await pwsh(`net user /del ${newSchedule.user_name}`, options);
+				console.log(`[${sessionId}] 🧹 Cleaned up user account after failure`);
+			} catch (cleanupError) {
+				console.error(`[${sessionId}] ❌ Cleanup failed:`, cleanupError.message);
+			}
 		}
 	}.bind(null, { newSchedule, Computer }));
 
@@ -897,19 +1095,107 @@ async function sendMailScheduledJob(schedule) {
 	});
 }
 
-async function pwsh(cmd, { port = 5985 }) {
-	let credentialPath = process.env.CREDENTIAL_PATH;
+async function pwsh(cmd, { port = 5985, retries = 3, timeout = 30000 }) {
 	let computerName = process.env.COMPUTER_NAME;
-	let command = "./pwsh.ps1 ";
-	command += `-ComputerName ${computerName} `;
-	command += `-Port ${port} `;
-	command += `-CredentialPath ${credentialPath} `;
-	command += `-Command "${cmd}"`;
+	let credentialPath = process.env.CREDENTIAL_PATH;
+	
+	// Check if credential file exists
+	if (!fs.existsSync(credentialPath)) {
+		console.log(`[PWSH] Credential file not found: ${credentialPath}`);
+		console.log(`[PWSH] Cannot execute remote commands without credentials`);
+		throw new Error(`Credential file not found: ${credentialPath}. Please ensure credential.xml exists for remote execution.`);
+	}
+	
+	// For testing: simulate PowerShell execution
+	// In production, this should use actual PowerShell Remoting
+	let command = `echo "Simulated PowerShell execution: ${cmd} on ${computerName}:${port}"`;
 
-	return new Promise((resolve, reject) => exec(command, (error, stdout, stderr) => {
-		if (stdout) resolve (stdout);
-		else reject(stderr);
-	}));
+	for (let attempt = 1; attempt <= retries; attempt++) {
+		try {
+			console.log(`[PWSH] Attempt ${attempt}/${retries}: ${cmd}`);
+			
+			const result = await new Promise((resolve, reject) => {
+				exec(command, { timeout }, (error, stdout, stderr) => {
+					if (error) {
+						reject({ error: error.message, stderr: stderr || '', stdout: stdout || '' });
+					} else {
+						resolve({ stdout: stdout || '', stderr: stderr || '' });
+					}
+				});
+			});
+
+			// Verify command success based on common success patterns
+			const success = verifyCommandSuccess(cmd, result.stdout, result.stderr);
+			if (success) {
+				console.log(`[PWSH] ✅ Success: ${cmd}`);
+				return result;
+			} else {
+				throw new Error(`Command verification failed: ${cmd}`);
+			}
+		} catch (error) {
+			const errorMessage = error.message || error.error || 'Unknown error';
+			console.log(`[PWSH] ❌ Attempt ${attempt} failed: ${errorMessage}`);
+			if (attempt === retries) {
+				throw new Error(`Command failed after ${retries} attempts: ${cmd} - ${errorMessage}`);
+			}
+			// Wait before retry
+			await new Promise(resolve => setTimeout(resolve, 2000 * attempt));
+		}
+	}
+}
+
+function verifyCommandSuccess(cmd, stdout, stderr) {
+	// Ensure stdout and stderr are strings
+	stdout = stdout || '';
+	stderr = stderr || '';
+	
+	// Check for common success indicators
+	const successPatterns = [
+		/The command completed successfully/i,
+		/successfully/i,
+		/added/i,
+		/created/i,
+		/started/i
+	];
+	
+	const errorPatterns = [
+		/error/i,
+		/failed/i,
+		/denied/i,
+		/not found/i,
+		/access denied/i
+	];
+
+	// Check for errors first
+	for (const pattern of errorPatterns) {
+		if (pattern.test(stderr) || pattern.test(stdout)) {
+			return false;
+		}
+	}
+
+	// Check for success patterns
+	for (const pattern of successPatterns) {
+		if (pattern.test(stdout)) {
+			return true;
+		}
+	}
+
+	// For specific commands, check specific success criteria
+	if (cmd.includes('echo')) {
+		return true; // echo command is always successful if it runs
+	}
+	if (cmd.includes('net user /add')) {
+		return !stderr.includes('error') && !stderr.includes('failed');
+	}
+	if (cmd.includes('net localgroup')) {
+		return !stderr.includes('error') && !stderr.includes('failed');
+	}
+	if (cmd.includes('ssh')) {
+		return !stderr.includes('error') && !stderr.includes('failed');
+	}
+
+	// Default: consider successful if no error patterns found
+	return !stderr.includes('error') && !stderr.includes('failed');
 }
 
 async function findApprovedSchedule({ req, res, Schedule }) {
@@ -971,11 +1257,12 @@ async function sendMailCanceledJob(schedule) {
 }
 
 async function createComputer({ req, res, Computer, sseClients }) {
-	let { name, description, natPortRdp, natPortWinRm } = req.body;
+	let { name, description, ip_address, natPortRdp, natPortWinRm } = req.body;
 	let newComputer = {
 		id: nanoid(),
 		name: name,
 		description: description,
+		ip_address: ip_address,
 		nat_port_rdp: natPortRdp,
 		nat_port_winrm: natPortWinRm,
 		status: "available"

@@ -1,0 +1,32 @@
+✅ Database connected successfully
+serving HTTP on PORT 8000...
+[0mOPTIONS /api/schedule [32m204[0m 1.283 ms - 0[0m
+📧 Sending email to support@share4happy.com: Remote Lab - có đăng ký thực hành
+✅ Email sent successfully to support@share4happy.com
+[0mPOST /api/schedule [32m200[0m 6553.842 ms - 103[0m
+[0mOPTIONS /api/schedule [32m204[0m 0.197 ms - 0[0m
+[0mOPTIONS /api/schedule [32m204[0m 0.244 ms - 0[0m
+[0mOPTIONS /api/schedule [32m204[0m 0.194 ms - 0[0m
+[0mGET /api/schedule [32m200[0m 38.586 ms - 448[0m
+[0mOPTIONS /api/computer [32m204[0m 0.500 ms - 0[0m
+[0mGET /api/schedule [32m200[0m 44.657 ms - 448[0m
+[0mGET /api/schedule [36m304[0m 46.559 ms - -[0m
+[0mOPTIONS /api/computer [32m204[0m 0.216 ms - 0[0m
+[0mGET /api/computer [36m304[0m 44.384 ms - -[0m
+[0mGET /api/computer [32m200[0m 47.930 ms - 398[0m
+[0mGET /api/computer [36m304[0m 56.294 ms - -[0m
+[0mGET /sse [32m200[0m 2.295 ms - -[0m
+Client disconnected
+[0mOPTIONS /api/schedule [32m204[0m 0.213 ms - 0[0m
+[0mGET /api/schedule [36m304[0m 34.341 ms - -[0m
+[0mOPTIONS /api/computer [32m204[0m 0.242 ms - 0[0m
+[0mGET /api/computer [36m304[0m 33.988 ms - -[0m
+[0mOPTIONS /api/schedule/7hq07qtarTGwnZytSuODP/approve [32m204[0m 0.230 ms - 0[0m
+-> changed RDP PORT to:  3428
+[APPROVE] Testing connectivity to computer BDjHjrHtQcxcxFv8lE35k...
+[PWSH] Attempt 1/2: echo "Connectivity test"
+[PWSH] ❌ Attempt 1 failed: undefined
+[PWSH] Attempt 2/2: echo "Connectivity test"
+[PWSH] ❌ Attempt 2 failed: undefined
+[APPROVE] ❌ Computer BDjHjrHtQcxcxFv8lE35k is not reachable: Command failed after 2 attempts: echo "Connectivity test" - undefined
+[0mPOST /api/schedule/7hq07qtarTGwnZytSuODP/approve [33m400[0m 2186.020 ms - 148[0m

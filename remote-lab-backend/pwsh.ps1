@@ -13,8 +13,14 @@ param (
 # Import credentials from credential.xml
 $cred = Import-Clixml -Path $CredentialPath
 
-# Execute the input command on the remote machine using SSH
-Invoke-Command -ComputerName $ComputerName -Port $Port -Credential $cred -ScriptBlock {
-    Invoke-Expression $using:Command  # Use the input command
+# Execute the input command on the remote machine using PowerShell Remoting
+try {
+    $result = Invoke-Command -ComputerName $ComputerName -Port $Port -Credential $cred -ScriptBlock {
+        Invoke-Expression $using:Command  # Use the input command
+    }
+    Write-Output $result
+} catch {
+    Write-Error $_.Exception.Message
+    exit 1
 }
 
