@@ -1,9 +1,15 @@
 import db from '../config/database.js';
+import { nanoid } from 'nanoid';
 
 export class BaseModel {
   constructor(tableName) {
     this.tableName = tableName;
     this.db = db;
+  }
+
+  // Generate unique ID
+  generateId() {
+    return nanoid();
   }
 
   // Create a new record

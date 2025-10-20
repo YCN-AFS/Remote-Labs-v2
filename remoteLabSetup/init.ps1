@@ -57,6 +57,32 @@ function Get-ServerCommands {
     }
 }
 
+# Function to get admin credentials from server
+function Get-AdminCredentials {
+    try {
+        $response = Invoke-RestMethod -Uri "http://103.218.122.188:8000/api/admin-credentials" -Method GET -TimeoutSec 10
+        
+        if ($null -eq $response) {
+            Write-Log "Server returned null response for admin credentials"
+            return $null
+        }
+        
+        if ($response.username -and $response.password) {
+            Write-Log "✅ Retrieved admin credentials from server: $($response.username)"
+            return @{
+                username = $response.username
+                password = $response.password
+            }
+        } else {
+            Write-Log "Server response missing username or password: $($response | ConvertTo-Json -Depth 2)"
+            return $null
+        }
+    } catch {
+        Write-Log "Failed to get admin credentials from server: $($_.Exception.Message)"
+        return $null
+    }
+}
+
 # Function to send status to server
 function Send-StatusToServer {
     param(
@@ -125,6 +151,23 @@ function Execute-ServerCommand {
                 Send-StatusToServer -Status "completed" -Message "Custom command executed: $($Command.command)"
             } catch {
                 Send-StatusToServer -Status "error" -Message "Custom command failed: $($_.Exception.Message)"
+            }
+        }
+        "register_computer" {
+            $registrationSuccess = Register-ComputerToServer
+            if ($registrationSuccess) {
+                Send-StatusToServer -Status "completed" -Message "Computer registered successfully"
+            } else {
+                Send-StatusToServer -Status "error" -Message "Computer registration failed"
+            }
+        }
+        "create_admin_user" {
+            if ($Command.username -and $Command.password) {
+                Create-User -userName $Command.username -password $Command.password
+                Send-StatusToServer -Status "completed" -Message "Admin user $($Command.username) created successfully"
+            } else {
+                Write-Log "ERROR: create_admin_user command missing username or password"
+                Send-StatusToServer -Status "error" -Message "create_admin_user command missing username or password"
             }
         }
         default {
@@ -248,15 +291,15 @@ function Create-User {
         [string]$password
     )
 
-	$secureStr = ConvertTo-SecureString "lhu@B304" -AsPlainText -Force
+	$secureStr = ConvertTo-SecureString $password -AsPlainText -Force
 
 	Write-Log "Creating user $userName..."
 
 	if (Get-LocalUser -Name $userName -ErrorAction SilentlyContinue) {
-		Write-Log "User 'Admin' exists, updating password..."
+		Write-Log "User '$userName' exists, updating password..."
 		Set-LocalUser -Name $userName -Password $secureStr
 	} else {
-		Write-Log "User 'Admin' does not exist, creating user..."
+		Write-Log "User '$userName' does not exist, creating user..."
 		New-LocalUser -Name $userName -Password $secureStr -FullName "Administrator" -Description "Admin User" -AccountNeverExpires
 		Add-LocalGroupMember -Group "Administrators" -Member $userName
 	}
@@ -296,6 +339,99 @@ function Import-Task-SSH-5985 {
 	Write-Log "SSH Task imported successfully."
 }
 
+# Function to get computer information
+function Get-ComputerInfo {
+    try {
+        $computerName = $env:COMPUTERNAME
+        $ipAddress = (Get-NetIPAddress -AddressFamily IPv4 | Where-Object { $_.IPAddress -notlike "127.*" -and $_.IPAddress -notlike "169.254.*" } | Select-Object -First 1).IPAddress
+        
+        # Get default RDP port (3389)
+        $rdpPort = 3389
+        
+        # Get WinRM port (5985)
+        $winrmPort = 5985
+        
+        # Try to get actual WinRM port from registry
+        try {
+            $winrmPort = (Get-ItemProperty -Path "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\WSMAN\Listener\Listener_*" -Name Port -ErrorAction SilentlyContinue | Select-Object -First 1).Port
+            if (-not $winrmPort) { $winrmPort = 5985 }
+        } catch {
+            $winrmPort = 5985
+        }
+        
+        return @{
+            name = $computerName
+            ip_address = $ipAddress
+            nat_port_rdp = $rdpPort
+            nat_port_winrm = $winrmPort
+            description = "Remote Lab PC - $computerName"
+        }
+    } catch {
+        Write-Log "Error getting computer info: $($_.Exception.Message)"
+        return $null
+    }
+}
+
+# Function to register computer to server with retry logic
+function Register-ComputerToServer {
+    param(
+        [int]$MaxRetries = 3,
+        [int]$RetryDelay = 5
+    )
+    
+    for ($attempt = 1; $attempt -le $MaxRetries; $attempt++) {
+        try {
+            Write-Log "Collecting computer information (Attempt $attempt/$MaxRetries)..."
+            $computerInfo = Get-ComputerInfo
+            
+            if (-not $computerInfo) {
+                Write-Log "Failed to collect computer information"
+                if ($attempt -eq $MaxRetries) { return $false }
+                Start-Sleep -Seconds $RetryDelay
+                continue
+            }
+            
+            Write-Log "Computer Info: $($computerInfo | ConvertTo-Json)"
+            
+            # Prepare registration data
+            $registrationData = @{
+                name = $computerInfo.name
+                description = $computerInfo.description
+                ip_address = $computerInfo.ip_address
+                natPortRdp = $computerInfo.nat_port_rdp
+                natPortWinRm = $computerInfo.nat_port_winrm
+            } | ConvertTo-Json -Depth 3
+            
+            Write-Log "Registering computer to server (Attempt $attempt/$MaxRetries)..."
+            Write-Log "Registration data: $registrationData"
+            
+            # Send registration request to server
+            $response = Invoke-RestMethod -Uri "http://103.218.122.188:8000/api/computer/register" -Method POST -Body $registrationData -ContentType "application/json" -TimeoutSec 30
+            
+            if ($response.status -eq "success") {
+                Write-Log "✅ Computer registered successfully: $($response.message)"
+                Write-Log "Computer ID: $($response.data.id)"
+                return $true
+            } else {
+                Write-Log "❌ Registration failed: $($response.message)"
+                if ($attempt -eq $MaxRetries) { return $false }
+                Write-Log "Retrying in $RetryDelay seconds..."
+                Start-Sleep -Seconds $RetryDelay
+            }
+        } catch {
+            Write-Log "❌ Error registering computer (Attempt $attempt/$MaxRetries): $($_.Exception.Message)"
+            if ($attempt -eq $MaxRetries) { 
+                Write-Log "❌ All registration attempts failed"
+                return $false 
+            }
+            Write-Log "Retrying in $RetryDelay seconds..."
+            Start-Sleep -Seconds $RetryDelay
+        }
+    }
+    
+    return $false
+}
+
 # Main execution with error handling
 try {
     Write-Log "Starting Remote Lab Setup..."
@@ -313,8 +449,8 @@ try {
         # Parse and execute single command
         $command = @{
             action = $ServerCommand
-            username = "Admin"
-            password = "lhu@B304"
+            username = "remotelab"
+            password = "0084"
         }
         Execute-ServerCommand -Command $command
         
@@ -350,8 +486,20 @@ try {
                         # Only run default setup on first run
                         Write-Log "No server commands found, running initial setup..."
                         
-                        $adminUser = "Admin"
-                        $adminPassword = "lhu@B304"
+                        # Try to get admin credentials from server first
+                        Write-Log "Attempting to get admin credentials from server..."
+                        $adminCredentials = Get-AdminCredentials
+                        
+                        if ($adminCredentials) {
+                            $adminUser = $adminCredentials.username
+                            $adminPassword = $adminCredentials.password
+                            Write-Log "✅ Using admin credentials from server: $adminUser"
+                        } else {
+                            # Fallback to default credentials if server is unavailable
+                            $adminUser = "Admin"
+                            $adminPassword = "lhu@B304"
+                            Write-Log "⚠️ Server unavailable, using default credentials: $adminUser"
+                        }
                         
                         Write-Log "Creating admin user..."
                         Create-User -userName $adminUser -password $adminPassword
@@ -376,6 +524,15 @@ try {
                         
                         Write-Log "Installing Arduino IDE..."
                         Install-Arduino
+                        
+                        # Register computer to server after initial setup
+                        Write-Log "Registering computer to server..."
+                        $registrationSuccess = Register-ComputerToServer
+                        if ($registrationSuccess) {
+                            Write-Log "✅ Computer registration completed successfully"
+                        } else {
+                            Write-Log "⚠️ Computer registration failed, but continuing setup..."
+                        }
                         
                         $isFirstRun = $false
                         $lastRunTime = Get-Date
@@ -411,8 +568,20 @@ try {
                 # Fallback to default setup
                 Write-Log "No server commands found, running default setup..."
                 
-                $adminUser = "Admin"
-                $adminPassword = "lhu@B304"
+                # Try to get admin credentials from server first
+                Write-Log "Attempting to get admin credentials from server..."
+                $adminCredentials = Get-AdminCredentials
+                
+                if ($adminCredentials) {
+                    $adminUser = $adminCredentials.username
+                    $adminPassword = $adminCredentials.password
+                    Write-Log "✅ Using admin credentials from server: $adminUser"
+                } else {
+                    # Fallback to default credentials if server is unavailable
+                    $adminUser = "Admin"
+                    $adminPassword = "lhu@B304"
+                    Write-Log "⚠️ Server unavailable, using default credentials: $adminUser"
+                }
                 
                 Write-Log "Creating admin user..."
                 Create-User -userName $adminUser -password $adminPassword
@@ -437,6 +606,15 @@ try {
                 
                 Write-Log "Installing Arduino IDE..."
                 Install-Arduino
+                
+                # Register computer to server after setup
+                Write-Log "Registering computer to server..."
+                $registrationSuccess = Register-ComputerToServer
+                if ($registrationSuccess) {
+                    Write-Log "✅ Computer registration completed successfully"
+                } else {
+                    Write-Log "⚠️ Computer registration failed, but continuing setup..."
+                }
             }
         }
     }

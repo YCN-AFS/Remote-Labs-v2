@@ -43,7 +43,7 @@ $instructions = @"
 [5/5] Next Steps:
 
 1. Add the public key above to server:
-   ssh remote@rm.s4h.edu.vn -p 8030
+   ssh remote@103.218.122.188 -p 8030
    mkdir -p ~/.ssh && chmod 700 ~/.ssh
    echo "PUBLIC_KEY_HERE" >> ~/.ssh/authorized_keys
    chmod 600 ~/.ssh/authorized_keys

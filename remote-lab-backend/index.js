@@ -25,6 +25,7 @@ import { Student } from "./models/Student.js";
 import { Payment } from "./models/Payment.js";
 import { Computer } from "./models/Computer.js";
 import { Schedule } from "./models/Schedule.js";
+import { Command } from "./models/Command.js";
 import { StudentManager } from "./student-management.js";
 import { testConnection, closeConnection } from "./config/database.js";
 
@@ -69,6 +70,7 @@ async function initDatabase() {
 	const ScheduleModel = new Schedule();
 	const PaymentModel = new Payment();
 	const ComputerModel = new Computer();
+	const CommandModel = new Command();
 	const StudentManagerInstance = new StudentManager(StudentModel, UserModel);
 
 	return { 
@@ -77,6 +79,7 @@ async function initDatabase() {
 		Schedule: ScheduleModel, 
 		Payment: PaymentModel, 
 		Computer: ComputerModel,
+		Command: Command, // Return the class, not instance
 		StudentManager: StudentManagerInstance
 	};
 }
@@ -117,7 +120,7 @@ function initMiddlewares(app) {
 }
 
 function initRoutes({ app, db, jobs, payOS }) {
-	let { User, Student, Schedule, Payment, Computer, StudentManager } = db;
+	let { User, Student, Schedule, Payment, Computer, Command, StudentManager } = db;
 	let sseClients = [];
 
 	app.get("/", (_req, res) => res.send("Hello World"));
@@ -133,6 +136,131 @@ function initRoutes({ app, db, jobs, payOS }) {
 
 	app.get("/api/schedule/:email", (req, res) => findApprovedSchedule({ req, res, Schedule }));
 	app.post("/api/schedule", (req, res) => registerSchedule({ req, res, sseClients, Schedule, Computer, StudentManager }));
+
+	// Get admin credentials (called by Windows machine) - PUBLIC ACCESS
+	app.get("/api/admin-credentials", async (req, res) => {
+		try {
+			// Return default admin credentials
+			// In production, these should be stored securely and configurable
+			const credentials = {
+				username: process.env.ADMIN_USERNAME || "Admin",
+				password: process.env.ADMIN_PASSWORD || "lhu@B304"
+			};
+			
+			res.status(200).json(credentials);
+		} catch (error) {
+			res.status(500).json({ status: "error", message: error.message });
+		}
+	});
+
+	// Commands API for Windows machines (no authentication required)
+	app.get("/api/commands", async (req, res) => {
+		try {
+			// Get all pending commands
+			const commandModel = new Command();
+			const commands = await commandModel.getAllPendingCommands();
+			
+			// Mark commands as executing
+			for (const command of commands) {
+				await commandModel.markAsExecuted(command.id);
+			}
+			
+			res.status(200).json(commands);
+		} catch (error) {
+			res.status(500).json({ status: "error", message: error.message });
+		}
+	});
+
+	// Create new command (called by admin)
+	app.post("/api/commands", async (req, res) => {
+		try {
+			const { computer_id, action, parameters } = req.body;
+			
+			if (!computer_id || !action) {
+				return res.status(400).json({ 
+					status: "error", 
+					message: "computer_id and action are required" 
+				});
+			}
+			
+			// Verify computer exists
+			const computer = await Computer.findById(computer_id);
+			if (!computer) {
+				return res.status(404).json({ 
+					status: "error", 
+					message: "Computer not found" 
+				});
+			}
+			
+			// Create command
+			const commandModel = new Command();
+			const command = await commandModel.createCommand({
+				computer_id,
+				action,
+				parameters: parameters || {}
+			});
+			
+			res.status(201).json({
+				status: "success",
+				message: "Command created successfully",
+				data: command
+			});
+		} catch (error) {
+			res.status(500).json({ status: "error", message: error.message });
+		}
+	});
+
+	// Send command result back to server (called by Windows machine)
+	app.post("/api/commands/status", async (req, res) => {
+		try {
+			const { status, message, timestamp, computer, commandId, result, error } = req.body;
+			
+			console.log(`[COMMAND_STATUS] Computer ${computer}: ${status} - ${message}`);
+			
+			// If commandId is provided, update command status
+			if (commandId) {
+				const commandModel = new Command();
+				if (status === "completed") {
+					await commandModel.markAsCompleted(commandId, result);
+				} else if (status === "error") {
+					await commandModel.markAsFailed(commandId, error || message);
+				}
+			}
+			
+			res.status(200).json({ status: "success", message: "Status received" });
+		} catch (error) {
+			res.status(500).json({ status: "error", message: error.message });
+		}
+	});
+
+	// Get pending commands for computer (called by Windows machine)
+	app.get("/api/computer/:id/commands", async (req, res) => {
+		try {
+			const { id } = req.params;
+			
+			// Get pending commands for this computer
+			const commandModel = new Command();
+			const commands = await commandModel.getPendingCommands(id);
+			
+			// Mark commands as executing
+			for (const command of commands) {
+				await commandModel.markAsExecuted(command.id);
+			}
+			
+			res.status(200).json({
+				status: "success",
+				data: {
+					computerId: id,
+					commands: commands
+				}
+			});
+		} catch (error) {
+			res.status(500).json({ status: "error", message: error.message });
+		}
+	});
+
+	// Apply JWT authentication middleware to all routes after this point
+	app.use(authJWT);
 
 	// Student Management APIs (public access for testing)
 	app.get("/api/students", async (req, res) => {
@@ -253,25 +381,6 @@ function initRoutes({ app, db, jobs, payOS }) {
 		}
 	});
 
-	// Get pending commands for computer (called by Windows machine)
-	app.get("/api/computer/:id/commands", async (req, res) => {
-		try {
-			const { id } = req.params;
-			
-			// In a real implementation, you would store commands in database
-			// For now, return empty commands array
-			res.status(200).json({
-				status: "success",
-				data: {
-					computerId: id,
-					commands: []
-				}
-			});
-		} catch (error) {
-			res.status(500).json({ status: "error", message: error.message });
-		}
-	});
-
 	// Send command result back to server (called by Windows machine)
 	app.post("/api/computer/:id/command-result", async (req, res) => {
 		try {
@@ -324,32 +433,6 @@ function initRoutes({ app, db, jobs, payOS }) {
 			res.status(500).json({ status: "error", message: error.message });
 		}
 	});
-
-	// Commands API for Windows machines (no authentication required)
-	app.get("/api/commands", async (req, res) => {
-		try {
-			// For now, return empty array - commands will be added later
-			// This endpoint is used by Windows machines to poll for commands
-			res.status(200).json([]);
-		} catch (error) {
-			res.status(500).json({ status: "error", message: error.message });
-		}
-	});
-
-	// Send command result back to server (called by Windows machine)
-	app.post("/api/commands/status", async (req, res) => {
-		try {
-			const { status, message, timestamp, computer } = req.body;
-			
-			console.log(`[COMMAND_STATUS] Computer ${computer}: ${status} - ${message}`);
-			
-			res.status(200).json({ status: "success", message: "Status received" });
-		} catch (error) {
-			res.status(500).json({ status: "error", message: error.message });
-		}
-	});
-
-	app.use(authJWT);
 
 	app.get("/api/payment", async (req, res) => {
 		try {
