@@ -1,3 +1,4 @@
-remoteLabSetup/remote-lab-camera.zipremoteLabSetup/remote-lab-camera.zip
+# Large files that exceed GitHub's 100MB limit
+remoteLabSetup(Windows)/remote-lab-camera.zip
 remoteLabSetup/remote-lab-camera.zip
-remoteLabSetup/remote-lab-camera.zip
+*.zip
