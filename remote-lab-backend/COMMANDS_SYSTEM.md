@@ -172,3 +172,6 @@ DB_NAME=remote_labs
 - Script sẽ polling server mỗi 30 giây (có thể cấu hình)
 - Lệnh cũ hơn 7 ngày sẽ được tự động xóa
 - Tất cả endpoint commands không yêu cầu authentication
+
+
+

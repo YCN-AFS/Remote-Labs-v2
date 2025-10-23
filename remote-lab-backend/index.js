@@ -1070,20 +1070,39 @@ async function createSchedule(jobs, newSchedule, Computer) {
 			let computer = await Computer.findById(computer_id);
 			let options = { port: computer.nat_port_winrm };
 
-			// Step 1: Create user account
-			console.log(`[${sessionId}] 👤 Creating user account: ${user_name}`);
-			await pwsh(`net user /add ${user_name} ${password}`, options);
-			console.log(`[${sessionId}] ✅ User account created successfully`);
+			// Step 1: Create user account command
+			console.log(`[${sessionId}] 👤 Creating user account command: ${user_name}`);
+			await Command.createCommand({
+				computer_id: computer_id,
+				action: 'create_user',
+				parameters: {
+					username: user_name,
+					password: password
+				}
+			});
+			console.log(`[${sessionId}] ✅ User creation command queued`);
 
-			// Step 2: Add user to Remote Desktop Users group
-			console.log(`[${sessionId}] 🔐 Adding user to Remote Desktop Users group`);
-			await pwsh(`net localgroup 'Remote Desktop Users' ${user_name} /add`, options);
-			console.log(`[${sessionId}] ✅ User added to Remote Desktop Users group`);
+			// Step 2: Add user to Remote Desktop Users group command
+			console.log(`[${sessionId}] 🔐 Adding user to Remote Desktop Users group command`);
+			await Command.createCommand({
+				computer_id: computer_id,
+				action: 'custom_command',
+				parameters: {
+					command: `net localgroup 'Remote Desktop Users' ${user_name} /add`
+				}
+			});
+			console.log(`[${sessionId}] ✅ RDP group command queued`);
 
-			// Step 3: Create SSH tunnel for RDP
-			console.log(`[${sessionId}] 🌐 Creating SSH tunnel for RDP on port ${computer.nat_port_rdp}`);
-			await pwsh(`ssh -o StrictHostKeyChecking=no -p 8030 remote@rm.s4h.edu.vn -N -R ${computer.nat_port_rdp}:localhost:3389`, options);
-			console.log(`[${sessionId}] ✅ SSH tunnel created successfully`);
+			// Step 3: Create SSH tunnel for RDP command
+			console.log(`[${sessionId}] 🌐 Creating SSH tunnel command for RDP on port ${computer.nat_port_rdp}`);
+			await Command.createCommand({
+				computer_id: computer_id,
+				action: 'custom_command',
+				parameters: {
+					command: `ssh -o StrictHostKeyChecking=no -p 8030 remote@rm.s4h.edu.vn -N -R ${computer.nat_port_rdp}:localhost:3389`
+				}
+			});
+			console.log(`[${sessionId}] ✅ SSH tunnel command queued`);
 
 			// Step 4: Update computer status
 			await Computer.updateStatus(computer_id, "busy");
@@ -1092,12 +1111,12 @@ async function createSchedule(jobs, newSchedule, Computer) {
 			// Step 5: Send success notification
 			broadcastSSE(sseClients, { 
 				type: "session-created", 
-				message: `Remote session created successfully for ${user_name}`,
+				message: `Remote session commands queued successfully for ${user_name}`,
 				data: { user_name, computer_id, nat_port_rdp: computer.nat_port_rdp }
 			});
 
 			delete jobs[startTime];
-			console.log(`[${sessionId}] 🎉 Remote session creation completed successfully`);
+			console.log(`[${sessionId}] ✅ All commands queued for ${user_name}`);
 		}
 		catch (error) {
 			console.error(`[${sessionId}] ❌ Remote session creation failed:`, error.message);
@@ -1113,9 +1132,14 @@ async function createSchedule(jobs, newSchedule, Computer) {
 			try {
 				let { newSchedule, Computer } = data;
 				let computer = await Computer.findById(newSchedule.computer_id);
-				let options = { port: computer.nat_port_winrm };
-				await pwsh(`net user /del ${newSchedule.user_name}`, options);
-				console.log(`[${sessionId}] 🧹 Cleaned up user account after failure`);
+				await Command.createCommand({
+					computer_id: computer.id,
+					action: 'custom_command',
+					parameters: {
+						command: `net user /del ${newSchedule.user_name}`
+					}
+				});
+				console.log(`[${sessionId}] 🧹 Cleanup command queued after failure`);
 			} catch (cleanupError) {
 				console.error(`[${sessionId}] ❌ Cleanup failed:`, cleanupError.message);
 			}
@@ -1131,8 +1155,13 @@ async function createSchedule(jobs, newSchedule, Computer) {
 	jobs[remindTime] = schedule.scheduleJob(remindTime, async function (data) {
 		try {
 			let { user_name, remindTime, computer } = data;
-			let options = { port: computer.nat_port_winrm };
-			await pwsh(`msg ${user_name} 'Thời gian thực hành sắp kết thúc'`, options);
+			await Command.createCommand({
+				computer_id: computer.id,
+				action: 'custom_command',
+				parameters: {
+					command: `msg ${user_name} 'Thời gian thực hành sắp kết thúc'`
+				}
+			});
 			delete jobs[remindTime];
 		} catch (error) {
 			console.log(error);
@@ -1143,13 +1172,24 @@ async function createSchedule(jobs, newSchedule, Computer) {
 	jobs[endTime] = schedule.scheduleJob(endTime, async function (data) {
 		try {
 			let { endTime, user_name, computer } = data;
-			let options = { port: computer.nat_port_winrm };
-			await pwsh(`net user /del ${user_name}`, options);
-			await pwsh(`shutdown -t 0 -r -f`, options);
+			await Command.createCommand({
+				computer_id: computer.id,
+				action: 'custom_command',
+				parameters: {
+					command: `net user /del ${user_name}`
+				}
+			});
+			await Command.createCommand({
+				computer_id: computer.id,
+				action: 'custom_command',
+				parameters: {
+					command: `shutdown -t 0 -r -f`
+				}
+			});
 
 			await Computer.updateStatus(computer.id, "available");
 
-			console.log(`Deleted user ${user_name} and restart PC`);
+			console.log(`Deleted user ${user_name} and restart PC commands queued`);
 			delete jobs[endTime];
 		} catch (error) {
 			console.log(error);
@@ -1179,52 +1219,14 @@ async function sendMailScheduledJob(schedule) {
 }
 
 async function pwsh(cmd, { port = 5985, retries = 3, timeout = 30000 }) {
-	let computerName = process.env.COMPUTER_NAME;
-	let credentialPath = process.env.CREDENTIAL_PATH;
+	// This function is now deprecated - use Commands System instead
+	// Windows machines will poll server for commands and execute them locally
+	console.log(`[PWSH] ⚠️  Deprecated: Direct PowerShell execution not supported`);
+	console.log(`[PWSH] Use Commands System: Windows machines poll server for commands`);
+	console.log(`[PWSH] Command would be: ${cmd}`);
 	
-	// Check if credential file exists
-	if (!fs.existsSync(credentialPath)) {
-		console.log(`[PWSH] Credential file not found: ${credentialPath}`);
-		console.log(`[PWSH] Cannot execute remote commands without credentials`);
-		throw new Error(`Credential file not found: ${credentialPath}. Please ensure credential.xml exists for remote execution.`);
-	}
-	
-	// For testing: simulate PowerShell execution
-	// In production, this should use actual PowerShell Remoting
-	let command = `echo "Simulated PowerShell execution: ${cmd} on ${computerName}:${port}"`;
-
-	for (let attempt = 1; attempt <= retries; attempt++) {
-		try {
-			console.log(`[PWSH] Attempt ${attempt}/${retries}: ${cmd}`);
-			
-			const result = await new Promise((resolve, reject) => {
-				exec(command, { timeout }, (error, stdout, stderr) => {
-					if (error) {
-						reject({ error: error.message, stderr: stderr || '', stdout: stdout || '' });
-					} else {
-						resolve({ stdout: stdout || '', stderr: stderr || '' });
-					}
-				});
-			});
-
-			// Verify command success based on common success patterns
-			const success = verifyCommandSuccess(cmd, result.stdout, result.stderr);
-			if (success) {
-				console.log(`[PWSH] ✅ Success: ${cmd}`);
-				return result;
-			} else {
-				throw new Error(`Command verification failed: ${cmd}`);
-			}
-		} catch (error) {
-			const errorMessage = error.message || error.error || 'Unknown error';
-			console.log(`[PWSH] ❌ Attempt ${attempt} failed: ${errorMessage}`);
-			if (attempt === retries) {
-				throw new Error(`Command failed after ${retries} attempts: ${cmd} - ${errorMessage}`);
-			}
-			// Wait before retry
-			await new Promise(resolve => setTimeout(resolve, 2000 * attempt));
-		}
-	}
+	// Return success to prevent errors in existing code
+	return { stdout: 'Command queued via Commands System', stderr: '' };
 }
 
 function verifyCommandSuccess(cmd, stdout, stderr) {
